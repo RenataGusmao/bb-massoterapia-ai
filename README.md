@@ -2,22 +2,35 @@
 
 API REST do MVP **BB Massoterapia AI**, criada em Python com FastAPI e preparada desde o início para hospedagem em nuvem, preferencialmente no Render.
 
-Neste momento, o projeto contém apenas a estrutura base da API. Banco de dados, Supabase, LangGraph, agentes de IA, autenticação e agendamentos serão adicionados somente em etapas futuras.
+Neste momento, o projeto possui a estrutura base da API e a primeira integração com Supabase PostgreSQL para apoiar o fluxo inicial de agendamento de massoterapia. LangGraph, agentes de IA, autenticação, regra dos 15 dias, notificações, feedbacks e regras complexas de disponibilidade serão adicionados somente em etapas futuras.
 
-## Estrutura inicial
+## Estrutura
 
 ```text
 bb-massoterapia-ai/
 ├── app/
 │   ├── api/
+│   │   ├── routes/
+│   │   │   └── colaboradores.py
+│   │   └── router.py
 │   ├── agents/
+│   ├── core/
+│   │   └── config.py
+│   ├── database/
+│   │   ├── repositories/
+│   │   │   ├── agendamentos.py
+│   │   │   ├── colaboradores.py
+│   │   │   ├── horarios.py
+│   │   │   └── massoterapeutas.py
+│   │   └── supabase.py
 │   ├── graphs/
-│   ├── services/
 │   ├── models/
 │   ├── schemas/
-│   ├── database/
-│   ├── core/
+│   │   └── colaborador.py
+│   ├── services/
 │   └── main.py
+├── database/
+│   └── schema.sql
 ├── tests/
 ├── .env.example
 ├── .gitignore
@@ -26,7 +39,7 @@ bb-massoterapia-ai/
 └── README.md
 ```
 
-## Como rodar localmente
+## Como Rodar Localmente
 
 Crie e ative um ambiente virtual:
 
@@ -46,6 +59,19 @@ Instale as dependências:
 pip install -r requirements.txt
 ```
 
+Copie o arquivo de exemplo para configurar variáveis locais:
+
+```bash
+copy .env.example .env
+```
+
+Preencha no `.env`:
+
+```env
+SUPABASE_URL=
+SUPABASE_SECRET_KEY=
+```
+
 Execute a API localmente:
 
 ```bash
@@ -58,7 +84,63 @@ Por padrão, a API ficará disponível em:
 http://127.0.0.1:8000
 ```
 
-## Como testar a API
+## Banco De Dados No Supabase
+
+1. Crie um projeto no Supabase.
+2. Acesse o painel do projeto.
+3. Abra o SQL Editor.
+4. Copie o conteúdo de `database/schema.sql`.
+5. Execute o script no Supabase.
+
+O schema inicial cria as tabelas:
+
+- `colaboradores`
+- `massoterapeutas`
+- `horarios_disponiveis`
+- `agendamentos`
+
+Os IDs são UUIDs gerados pelo PostgreSQL/Supabase. O status inicial dos agendamentos aceita:
+
+- `AGENDADO`
+- `CANCELADO`
+- `CONCLUIDO`
+- `FALTOU`
+
+Esta é a primeira versão do banco. A regra de negócio dos 15 dias ainda não está implementada e será tratada em uma etapa posterior.
+
+## Variáveis De Ambiente
+
+O projeto considera a variável `PORT`, usada por plataformas de nuvem como o Render.
+
+Para conexão com o Supabase:
+
+```env
+SUPABASE_URL=
+SUPABASE_SECRET_KEY=
+```
+
+Não coloque credenciais reais no Git. Em ambiente local, preencha esses valores apenas no arquivo `.env`, que já está ignorado pelo `.gitignore`.
+
+Como este projeto é apenas backend, use a chave secreta do Supabase somente nas variáveis de ambiente do servidor. Não exponha essa chave em frontend, documentação pública, logs ou respostas da API.
+
+## Configuração No Render
+
+O arquivo `render.yaml` já define um serviço web Python com:
+
+- instalação via `pip install -r requirements.txt`;
+- inicialização com `uvicorn app.main:app --host 0.0.0.0 --port $PORT`;
+- variável `PYTHON_VERSION`.
+
+No serviço do Render, cadastre as variáveis:
+
+```text
+SUPABASE_URL
+SUPABASE_SECRET_KEY
+```
+
+Depois de salvar as variáveis, faça um novo deploy pelo Render quando quiser ativar a conexão no ambiente publicado.
+
+## Como Testar A API
 
 Endpoint raiz:
 
@@ -88,23 +170,48 @@ Resposta esperada:
 }
 ```
 
+Endpoint de saúde do banco:
+
+```text
+GET /health/db
+```
+
+Resposta esperada quando o Supabase estiver configurado e acessível:
+
+```json
+{
+  "status": "ok",
+  "database": "connected"
+}
+```
+
+Listar colaboradores:
+
+```text
+GET /colaboradores
+```
+
+Criar colaborador:
+
+```bash
+curl -X POST http://127.0.0.1:8000/colaboradores ^
+  -H "Content-Type: application/json" ^
+  -d "{\"nome\":\"Colaborador Teste\",\"matricula\":\"M001\",\"email\":\"colaborador@example.com\",\"setor\":\"Operações\"}"
+```
+
+Buscar colaborador por ID:
+
+```text
+GET /colaboradores/{id}
+```
+
 Documentação automática da API:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
-## Variáveis de ambiente
-
-Copie o arquivo `.env.example` para `.env` quando precisar configurar variáveis locais:
-
-```bash
-copy .env.example .env
-```
-
-O projeto já considera a variável `PORT`, usada por plataformas de nuvem como o Render.
-
-## Como preparar para GitHub
+## Como Preparar Para GitHub
 
 Inicialize o repositório:
 
@@ -122,13 +229,7 @@ git branch -M main
 git push -u origin main
 ```
 
-## Deploy no Render
-
-O arquivo `render.yaml` já define um serviço web Python com:
-
-- instalação via `pip install -r requirements.txt`;
-- inicialização com `uvicorn app.main:app --host 0.0.0.0 --port $PORT`;
-- variável `PYTHON_VERSION`.
+## Deploy No Render
 
 Passos gerais:
 
@@ -147,13 +248,14 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
-6. Faça o deploy.
+6. Cadastre `SUPABASE_URL` e `SUPABASE_SECRET_KEY`.
+7. Faça o deploy.
 
 Após o deploy, teste:
 
 ```text
 https://sua-api.onrender.com/
 https://sua-api.onrender.com/health
+https://sua-api.onrender.com/health/db
 https://sua-api.onrender.com/docs
 ```
-

@@ -1,11 +1,15 @@
 from fastapi import FastAPI
 
+from app.api.router import api_router
+
 
 app = FastAPI(
     title="BB Massoterapia AI",
     description="API REST do MVP BB Massoterapia AI, preparada para deploy em nuvem.",
     version="0.1.0",
 )
+
+app.include_router(api_router)
 
 
 @app.get("/")
@@ -16,4 +20,3 @@ def read_root() -> dict[str, str]:
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
-
