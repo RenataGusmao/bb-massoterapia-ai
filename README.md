@@ -284,6 +284,115 @@ resultado = agendamento_graph.invoke({
 })
 ```
 
+## Arquitetura Multiagente
+
+O endpoint principal de chat é `POST /chat`. Ele passa a mensagem para o Orquestrador, que chama o Agente de Recepção, interpreta a intenção retornada e decide qual componente deve responder.
+
+O Orquestrador não possui regra própria de agendamento, saúde, bem-estar ou intervalo de 15 dias. Ele também não acessa Supabase, repositories ou SQL diretamente.
+
+A Recepção identifica intenção. O Orquestrador decide qual componente será chamado. O Agente de Bem-Estar responde orientações gerais permitidas. O LangGraph de Agendamento executa o fluxo operacional quando chamado pelos endpoints próprios.
+
+As duas camadas funcionam de forma determinística, sem LLM, OpenAI, Gemini, memória, checkpointer ou chamada externa de IA. Nenhuma delas realiza diagnóstico, prescrição, indicação de tratamento ou recomendação clínica. O acesso ao banco continua separado nos fluxos e serviços próprios da API.
+
+```text
+Usuário
+↓
+POST /chat
+↓
+Orquestrador
+↓
+Agente de Recepção
+├── AGENDAMENTO
+│      ↓
+│  Agente/Fluxo de Agendamento
+│
+├── ORIENTACAO_BEM_ESTAR
+│      ↓
+│  Agente de Bem-Estar
+│
+├── SAUDE_SENSIVEL
+│      ↓
+│  Resposta segura
+│
+└── demais intenções
+```
+
+Para consultas como "Tem horário amanhã de manhã?", o chat já consulta disponibilidade real:
+
+```text
+Usuário
+↓
+Recepção
+↓
+Orquestrador
+↓
+Service de disponibilidade
+↓
+Repository
+↓
+Supabase
+↓
+horários disponíveis
+↓
+Chat
+```
+
+O chat textual interpreta seleções simples dentro da mesma sessão, como "quero o segundo" ou "pode ser 9h". Quando encontra opções, ele retorna `horario_id`, `massoterapeuta_id` e o índice de cada opção para que o cliente mantenha uma escolha explícita.
+
+Após a escolha, o cliente envia os IDs para:
+
+```text
+POST /chat/agendamento/confirmar
+```
+
+Esse endpoint monta o state inicial e executa o LangGraph real de agendamento:
+
+```text
+Consulta pelo chat
+↓
+opções disponíveis
+↓
+seleção explícita do usuário
+↓
+POST /chat/agendamento/confirmar
+↓
+LangGraph de Agendamento
+↓
+Services
+↓
+Repositories
+↓
+Supabase
+```
+
+A recepção continua disponível em `POST /chat/recepcao`, o agente de bem-estar em `POST /agents/bem-estar` e o fluxo operacional isolado em `POST /graph/agendamentos`.
+
+O chat também possui memória curta em processo para continuidade simples da sessão:
+
+```text
+"Tem horário amanhã de manhã?"
+↓
+opções numeradas
+↓
+"quero o segundo"
+↓
+seleção da opção salva na sessão
+↓
+"Deseja confirmar?"
+↓
+"sim"
+↓
+LangGraph
+↓
+agendamento
+```
+
+O `POST /chat` aceita `session_id` opcional. Quando ele não é enviado, a API gera um novo identificador e o devolve na resposta. O `colaborador_id` também pode ser enviado no payload e fica associado à sessão para a confirmação explícita do agendamento.
+
+A memória guarda apenas dados mínimos da conversa, como últimas opções de horário, seleção atual, dados extraídos e `colaborador_id`. Ela não guarda histórico completo nem conteúdo sensível de saúde. O TTL padrão é de 30 minutos de inatividade, configurável por `SESSION_TTL_MINUTES`.
+
+Essa memória é temporária, se perde ao reiniciar a API e não é adequada para múltiplos workers ou múltiplas instâncias. Uma evolução futura pode usar Redis, banco ou checkpointer apropriado.
+
 ## Como Preparar Para GitHub
 
 Inicialize o repositório:

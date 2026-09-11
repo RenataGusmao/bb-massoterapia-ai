@@ -1,3 +1,4 @@
+from datetime import date, time
 from uuid import UUID
 
 from app.database.supabase import get_supabase_client
@@ -27,6 +28,30 @@ def listar_horarios_disponiveis() -> list[dict]:
         .order("hora_inicio")
         .execute()
     )
+
+    return response.data or []
+
+
+def buscar_horarios_disponiveis(
+    data_consulta: date,
+    hora_inicio: time | None = None,
+    hora_fim: time | None = None,
+) -> list[dict]:
+    query = (
+        get_supabase_client()
+        .table("horarios_disponiveis")
+        .select("*")
+        .eq("disponivel", True)
+        .eq("data", data_consulta.isoformat())
+    )
+
+    if hora_inicio is not None:
+        query = query.gte("hora_inicio", hora_inicio.isoformat())
+
+    if hora_fim is not None:
+        query = query.lte("hora_inicio", hora_fim.isoformat())
+
+    response = query.order("hora_inicio").execute()
 
     return response.data or []
 

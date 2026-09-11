@@ -16,6 +16,8 @@ class SettingsError(RuntimeError):
 class Settings:
     supabase_url: str | None
     supabase_secret_key: str | None
+    business_timezone: str
+    session_ttl_minutes: int
 
     def require_supabase(self) -> tuple[str, str]:
         if not self.supabase_url or not self.supabase_secret_key:
@@ -31,4 +33,6 @@ def get_settings() -> Settings:
     return Settings(
         supabase_url=os.getenv("SUPABASE_URL"),
         supabase_secret_key=os.getenv("SUPABASE_SECRET_KEY"),
+        business_timezone=os.getenv("BUSINESS_TIMEZONE", "America/Recife"),
+        session_ttl_minutes=int(os.getenv("SESSION_TTL_MINUTES", "30")),
     )
