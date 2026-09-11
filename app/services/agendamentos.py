@@ -1,5 +1,10 @@
+from datetime import date, timedelta
+
 from app.database.repositories.colaboradores import buscar_colaborador_por_id
-from app.database.repositories.agendamentos import criar_agendamento
+from app.database.repositories.agendamentos import (
+    buscar_agendamentos_validos_no_intervalo,
+    criar_agendamento,
+)
 from app.database.repositories.massoterapeutas import buscar_massoterapeuta_por_id
 from app.database.repositories.horarios import (
     atualizar_disponibilidade_horario,
@@ -33,6 +38,55 @@ class HorarioMassoterapeutaInvalidoError(ValueError):
     pass
 
 
+class IntervaloAgendamentoError(ValueError):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+def _parse_data_agendamento(data_agendamento: date | str) -> date:
+    if isinstance(data_agendamento, date):
+        return data_agendamento
+
+    return date.fromisoformat(data_agendamento)
+
+
+def _validar_intervalo_minimo(colaborador_id, nova_data: date) -> None:
+    data_inicio = nova_data - timedelta(days=14)
+    data_fim = nova_data + timedelta(days=14)
+    conflitos = buscar_agendamentos_validos_no_intervalo(
+        colaborador_id=colaborador_id,
+        data_inicio=data_inicio,
+        data_fim=data_fim,
+    )
+
+    if not conflitos:
+        return
+
+    datas_conflitantes = [
+        _parse_data_agendamento(conflito["data_agendamento"]) for conflito in conflitos
+    ]
+    conflito_anterior = max(
+        (data_conflito for data_conflito in datas_conflitantes if data_conflito <= nova_data),
+        default=None,
+    )
+
+    if conflito_anterior is not None:
+        proxima_data_permitida = conflito_anterior + timedelta(days=15)
+        raise IntervaloAgendamentoError(
+            f"Novo agendamento permitido somente a partir de {proxima_data_permitida.isoformat()}."
+        )
+
+    conflito_futuro = min(datas_conflitantes)
+    data_limite_anterior = conflito_futuro - timedelta(days=15)
+    proxima_data_permitida = conflito_futuro + timedelta(days=15)
+    raise IntervaloAgendamentoError(
+        "Já existe sessão válida em intervalo inferior a 15 dias. "
+        f"Escolha uma data até {data_limite_anterior.isoformat()} "
+        f"ou a partir de {proxima_data_permitida.isoformat()}."
+    )
+
+
 def criar_agendamento_para_horario(agendamento: AgendamentoCreate) -> dict:
     colaborador = buscar_colaborador_por_id(agendamento.colaborador_id)
     if colaborador is None:
@@ -57,6 +111,9 @@ def criar_agendamento_para_horario(agendamento: AgendamentoCreate) -> dict:
         raise HorarioMassoterapeutaInvalidoError(
             "Horário não pertence ao massoterapeuta informado."
         )
+
+    data_agendamento = _parse_data_agendamento(horario["data"])
+    _validar_intervalo_minimo(agendamento.colaborador_id, data_agendamento)
 
     horario_reservado = reservar_horario_disponivel(agendamento.horario_id)
     if horario_reservado is None:

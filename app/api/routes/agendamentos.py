@@ -13,6 +13,7 @@ from app.services.agendamentos import (
     HorarioIndisponivelError,
     HorarioMassoterapeutaInvalidoError,
     HorarioNaoEncontradoError,
+    IntervaloAgendamentoError,
     MassoterapeutaInativoError,
     MassoterapeutaNaoEncontradoError,
     criar_agendamento_para_horario,
@@ -65,6 +66,11 @@ def cadastrar_agendamento(agendamento: AgendamentoCreate) -> dict:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Horário não pertence ao massoterapeuta informado.",
+        ) from exc
+    except IntervaloAgendamentoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=exc.detail,
         ) from exc
     except HorarioIndisponivelError as exc:
         raise HTTPException(
