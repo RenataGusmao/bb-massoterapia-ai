@@ -108,6 +108,10 @@ Os IDs são UUIDs gerados pelo PostgreSQL/Supabase. O status inicial dos agendam
 
 Esta é a primeira versão do banco. A regra de negócio dos 15 dias ainda não está implementada e será tratada em uma etapa posterior.
 
+## Pendências Técnicas
+
+A reserva do horário e a criação do agendamento ainda não são executadas dentro de uma transação PostgreSQL única. Existe um risco residual de o horário ficar indisponível caso o processo falhe depois da reserva e antes da criação do agendamento. Essa consistência deverá ser corrigida futuramente com uma função/RPC transacional no PostgreSQL.
+
 ## Variáveis De Ambiente
 
 O projeto considera a variável `PORT`, usada por plataformas de nuvem como o Render.
