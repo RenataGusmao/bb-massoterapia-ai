@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from datetime import date, timedelta
+from uuid import UUID
 
 from app.database.repositories.colaboradores import buscar_colaborador_por_id
 from app.database.repositories.agendamentos import (
@@ -12,6 +14,14 @@ from app.database.repositories.horarios import (
     reservar_horario_disponivel,
 )
 from app.schemas.agendamento import AgendamentoCreate, AgendamentoStatus
+
+
+@dataclass(frozen=True)
+class AgendamentoContexto:
+    colaborador: dict
+    massoterapeuta: dict
+    horario: dict
+    data_agendamento: date
 
 
 class ColaboradorNaoEncontradoError(ValueError):
@@ -51,7 +61,7 @@ def _parse_data_agendamento(data_agendamento: date | str) -> date:
     return date.fromisoformat(data_agendamento)
 
 
-def _validar_intervalo_minimo(colaborador_id, nova_data: date) -> None:
+def _validar_intervalo_minimo(colaborador_id: UUID, nova_data: date) -> None:
     data_inicio = nova_data - timedelta(days=14)
     data_fim = nova_data + timedelta(days=14)
     conflitos = buscar_agendamentos_validos_no_intervalo(
@@ -87,7 +97,7 @@ def _validar_intervalo_minimo(colaborador_id, nova_data: date) -> None:
     )
 
 
-def criar_agendamento_para_horario(agendamento: AgendamentoCreate) -> dict:
+def validar_entidades_agendamento(agendamento: AgendamentoCreate) -> AgendamentoContexto:
     colaborador = buscar_colaborador_por_id(agendamento.colaborador_id)
     if colaborador is None:
         raise ColaboradorNaoEncontradoError("Colaborador não encontrado.")
@@ -113,8 +123,26 @@ def criar_agendamento_para_horario(agendamento: AgendamentoCreate) -> dict:
         )
 
     data_agendamento = _parse_data_agendamento(horario["data"])
-    _validar_intervalo_minimo(agendamento.colaborador_id, data_agendamento)
 
+    return AgendamentoContexto(
+        colaborador=colaborador,
+        massoterapeuta=massoterapeuta,
+        horario=horario,
+        data_agendamento=data_agendamento,
+    )
+
+
+def validar_intervalo_agendamento(
+    agendamento: AgendamentoCreate,
+    contexto: AgendamentoContexto,
+) -> None:
+    _validar_intervalo_minimo(agendamento.colaborador_id, contexto.data_agendamento)
+
+
+def executar_criacao_agendamento(
+    agendamento: AgendamentoCreate,
+    contexto: AgendamentoContexto,
+) -> dict:
     horario_reservado = reservar_horario_disponivel(agendamento.horario_id)
     if horario_reservado is None:
         raise HorarioIndisponivelError("Horário indisponível.")
@@ -137,3 +165,9 @@ def criar_agendamento_para_horario(agendamento: AgendamentoCreate) -> dict:
         except Exception:
             pass
         raise
+
+
+def criar_agendamento_para_horario(agendamento: AgendamentoCreate) -> dict:
+    contexto = validar_entidades_agendamento(agendamento)
+    validar_intervalo_agendamento(agendamento, contexto)
+    return executar_criacao_agendamento(agendamento, contexto)

@@ -21,6 +21,15 @@ from app.services.agendamentos import (
 
 router = APIRouter(prefix="/agendamentos", tags=["agendamentos"])
 
+AGENDAMENTO_POST_RESPONSES = {
+    201: {"description": "Agendamento criado."},
+    404: {"description": "Colaborador, massoterapeuta ou horário não encontrado."},
+    409: {"description": "Conflito de negócio, como intervalo mínimo, horário ocupado ou massoterapeuta inativo."},
+    422: {"description": "Dados inválidos ou horário incompatível com o massoterapeuta informado."},
+    500: {"description": "Erro interno controlado."},
+    503: {"description": "Falha de infraestrutura ou banco não configurado."},
+}
+
 
 @router.get("", response_model=list[AgendamentoResponse])
 def obter_agendamentos() -> list[dict]:
@@ -38,7 +47,12 @@ def obter_agendamentos() -> list[dict]:
         ) from exc
 
 
-@router.post("", response_model=AgendamentoResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=AgendamentoResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses=AGENDAMENTO_POST_RESPONSES,
+)
 def cadastrar_agendamento(agendamento: AgendamentoCreate) -> dict:
     try:
         return criar_agendamento_para_horario(agendamento)

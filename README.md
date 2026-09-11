@@ -2,7 +2,7 @@
 
 API REST do MVP **BB Massoterapia AI**, criada em Python com FastAPI e preparada desde o início para hospedagem em nuvem, preferencialmente no Render.
 
-Neste momento, o projeto possui a estrutura base da API e a primeira integração com Supabase PostgreSQL para apoiar o fluxo inicial de agendamento de massoterapia. LangGraph, agentes de IA, autenticação, regra dos 15 dias, notificações, feedbacks e regras complexas de disponibilidade serão adicionados somente em etapas futuras.
+Neste momento, o projeto possui a estrutura base da API, integração com Supabase PostgreSQL, fluxo básico de agendamento de massoterapia e regra de intervalo mínimo de 15 dias. Agentes de IA, autenticação, notificações, feedbacks e regras mais avançadas serão adicionados somente em etapas futuras.
 
 ## Estrutura
 
@@ -24,6 +24,11 @@ bb-massoterapia-ai/
 │   │   │   └── massoterapeutas.py
 │   │   └── supabase.py
 │   ├── graphs/
+│   │   └── agendamento/
+│   │       ├── conditions.py
+│   │       ├── graph.py
+│   │       ├── nodes.py
+│   │       └── state.py
 │   ├── models/
 │   ├── schemas/
 │   │   └── colaborador.py
@@ -106,7 +111,7 @@ Os IDs são UUIDs gerados pelo PostgreSQL/Supabase. O status inicial dos agendam
 - `CONCLUIDO`
 - `FALTOU`
 
-Esta é a primeira versão do banco. A regra de negócio dos 15 dias ainda não está implementada e será tratada em uma etapa posterior.
+Esta é a primeira versão do banco. A regra de negócio dos 15 dias está implementada na camada de services.
 
 ## Pendências Técnicas
 
@@ -213,6 +218,70 @@ Documentação automática da API:
 
 ```text
 http://127.0.0.1:8000/docs
+```
+
+## LangGraph — Fluxo De Agendamento
+
+Esta implementação usa LangGraph para orquestrar o processo de agendamento de forma determinística. Não há LLM, OpenAI, Gemini, chatbot, agentes autônomos, memória ou checkpointer nesta etapa.
+
+Conceitos principais:
+
+- State: dados que percorrem o fluxo.
+- Node: etapa executável do fluxo.
+- Edge: conexão fixa entre nodes.
+- Conditional Edge: decisão sobre qual caminho seguir conforme o State.
+
+Neste sistema:
+
+```text
+LangGraph → orquestra
+Services → executam regras de negócio
+Repositories → acessam dados
+Supabase → persiste dados
+```
+
+O LangGraph não duplica a regra de negócio. O endpoint experimental chama o mesmo service usado pelo endpoint tradicional `POST /agendamentos`.
+
+Fluxo textual:
+
+```text
+START
+  ↓
+receber_solicitacao
+  ↓
+validar_entidades
+  ↓
+  ├─ erro ─────────────→ responder_erro → END
+  ↓
+validar_intervalo
+  ↓
+  ├─ bloqueado ────────→ responder_erro → END
+  ↓
+executar_agendamento
+  ↓
+  ├─ erro ─────────────→ responder_erro → END
+  ↓
+responder_sucesso
+  ↓
+END
+```
+
+Endpoint experimental:
+
+```text
+POST /graph/agendamentos
+```
+
+Exemplo de execução direta do grafo:
+
+```python
+from app.graphs.agendamento.graph import agendamento_graph
+
+resultado = agendamento_graph.invoke({
+    "colaborador_id": "uuid-do-colaborador",
+    "massoterapeuta_id": "uuid-do-massoterapeuta",
+    "horario_id": "uuid-do-horario",
+})
 ```
 
 ## Como Preparar Para GitHub
