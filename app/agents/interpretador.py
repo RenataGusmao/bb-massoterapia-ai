@@ -1,4 +1,3 @@
-
 import json
 import re
 from dataclasses import dataclass
@@ -51,6 +50,24 @@ def _formatar_horarios(horarios: list[dict]) -> str:
     return "\n".join(linhas)
 
 
+def _obter_texto_resposta(conteudo) -> str:
+    if isinstance(conteudo, str):
+        return conteudo
+
+    if isinstance(conteudo, list):
+        partes = []
+        for bloco in conteudo:
+            if isinstance(bloco, str):
+                partes.append(bloco)
+            elif isinstance(bloco, dict):
+                texto = bloco.get("text")
+                if texto:
+                    partes.append(str(texto))
+        return "\n".join(partes)
+
+    return str(conteudo)
+
+
 def _extrair_json(texto: str) -> dict:
     limpo = texto.strip()
     limpo = re.sub(r"^```(?:json)?", "", limpo).strip()
@@ -95,7 +112,8 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
         ]
     )
 
-    dados = _extrair_json(str(resposta.content))
+    texto_resposta = _obter_texto_resposta(resposta.content)
+    dados = _extrair_json(texto_resposta)
 
     if dados.get("escolhido") is not True:
         return Interpretacao(
@@ -105,7 +123,6 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
 
     horario_id = str(dados.get("horario_id", ""))
 
-    
     horario_escolhido = next(
         (horario for horario in horarios if str(horario["id"]) == horario_id),
         None,
