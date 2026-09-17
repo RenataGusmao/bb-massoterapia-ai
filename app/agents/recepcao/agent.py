@@ -2,6 +2,7 @@ import re
 
 from app.agents.recepcao.classifier import classificar_intencao, normalizar_mensagem
 from app.agents.recepcao.intents import Intencao
+from app.agents.recepcao.llm_classifier import classificar_intencao_com_llm
 
 
 ENCAMINHAMENTOS = {
@@ -14,8 +15,8 @@ ENCAMINHAMENTOS = {
 
 
 def processar_mensagem_recepcao(mensagem: str) -> dict:
-    intencao = classificar_intencao(mensagem)
-    dados_extraidos = extrair_dados_basicos(mensagem)
+    intencao, dados_llm = classificar_intencao_com_llm(mensagem)
+    dados_extraidos = {**extrair_dados_basicos(mensagem), **dados_llm}
     dados_faltantes = identificar_dados_faltantes(intencao, dados_extraidos)
 
     return {

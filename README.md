@@ -393,6 +393,33 @@ A memória guarda apenas dados mínimos da conversa, como últimas opções de h
 
 Essa memória é temporária, se perde ao reiniciar a API e não é adequada para múltiplos workers ou múltiplas instâncias. Uma evolução futura pode usar Redis, banco ou checkpointer apropriado.
 
+## Gemini No Agente De Recepção
+
+O Agente de Recepção pode usar Gemini para melhorar a interpretação de linguagem natural livre, mantendo o classificador determinístico como fallback. A saída do modelo é validada em formato estruturado com intenção, confiança, referência de data e período.
+
+Fluxo de classificação:
+
+```text
+mensagem
+↓
+Gemini configurado?
+├── sim → classificação estruturada
+└── não → classificador determinístico
+```
+
+Se a chamada ao Gemini falhar, exceder timeout, retornar JSON inválido, usar intenção fora do enum ou vier com confiança abaixo do limite configurado, o sistema volta automaticamente para o classificador determinístico.
+
+O Gemini não decide regras de negócio, não aplica a regra dos 15 dias, não confirma agendamento e não acessa Supabase. Ele recebe somente a mensagem textual corrente necessária para classificar a intenção. Dados sensíveis persistidos, informações clínicas de banco, diagnósticos, medicamentos ou dados de terceiros não devem ser enviados ao modelo.
+
+Variáveis opcionais:
+
+```text
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.8-flash
+LLM_CONFIDENCE_THRESHOLD=0.60
+GEMINI_TIMEOUT_SECONDS=5
+```
+
 ## Como Preparar Para GitHub
 
 Inicialize o repositório:
