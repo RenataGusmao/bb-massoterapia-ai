@@ -2,6 +2,7 @@ from datetime import date
 
 from pydantic import ValidationError
 
+from app.agents.interpretador import InterpretacaoError, interpretar_mensagem
 from app.database.supabase import SupabaseConfigurationError
 from app.graphs.agendamento.state import AgendamentoState
 from app.schemas.agendamento import AgendamentoCreate
@@ -31,8 +32,59 @@ def receber_solicitacao(state: AgendamentoState) -> AgendamentoState:
         "intervalo_permitido": False,
         "sucesso": False,
         "status_http": 202,
-        "mensagem": "Solicitação recebida.",
+        "mensagem_resposta": "Solicitação recebida.",
         "agendamento": None,
+        "erro": None,
+    }
+
+
+def interpretar_solicitacao(state: AgendamentoState) -> AgendamentoState:
+    """Node de IA.
+
+    So entra em acao quando o cliente NAO mandou os ids. Se eles ja vieram
+    prontos, o node apenas repassa o estado e nenhuma chamada ao modelo
+    acontece, o que economiza cota do free tier.
+    """
+    if state.get("horario_id") and state.get("massoterapeuta_id"):
+        return {
+            **state,
+            "mensagem_resposta": "Solicitação estruturada, interpretação dispensada.",
+        }
+
+    mensagem = (state.get("mensagem") or "").strip()
+
+    if not mensagem:
+        return _erro(
+            state,
+            422,
+            "Informe horario_id e massoterapeuta_id ou uma mensagem em texto.",
+            "solicitacao_incompleta",
+        )
+
+    try:
+        interpretacao = interpretar_mensagem(mensagem)
+    except InterpretacaoError as exc:
+        return _erro(state, 503, str(exc), "interpretador_indisponivel")
+    except SupabaseConfigurationError:
+        return _erro(state, 503, "Banco de dados não configurado.", "banco_nao_configurado")
+    except Exception:
+        return _erro(state, 502, "Falha ao consultar o modelo de linguagem.", "erro_llm")
+
+    if not interpretacao.escolhido:
+        return _erro(
+            state,
+            422,
+            interpretacao.motivo or "Não foi possível entender o pedido.",
+            "interpretacao_inconclusiva",
+        )
+
+    return {
+        **state,
+        "horario_id": interpretacao.horario_id,
+        "massoterapeuta_id": interpretacao.massoterapeuta_id,
+        "interpretacao": interpretacao.justificativa,
+        "status_http": 200,
+        "mensagem_resposta": "Pedido interpretado.",
         "erro": None,
     }
 
@@ -78,7 +130,7 @@ def validar_entidades(state: AgendamentoState) -> AgendamentoState:
         "data_agendamento": contexto.data_agendamento.isoformat(),
         "entidades_validas": True,
         "status_http": 200,
-        "mensagem": "Entidades validadas.",
+        "mensagem_resposta": "Entidades validadas.",
         "erro": None,
     }
 
@@ -99,7 +151,7 @@ def validar_intervalo(state: AgendamentoState) -> AgendamentoState:
         **state,
         "intervalo_permitido": True,
         "status_http": 200,
-        "mensagem": "Intervalo permitido.",
+        "mensagem_resposta": "Intervalo permitido.",
         "erro": None,
     }
 
@@ -109,6 +161,8 @@ def executar_agendamento(state: AgendamentoState) -> AgendamentoState:
         agendamento = _criar_schema(state)
         contexto = _criar_contexto(state)
         resultado = executar_criacao_agendamento(agendamento, contexto)
+    except IntervaloAgendamentoError as exc:
+        return _erro(state, 409, exc.detail, "intervalo_minimo")
     except HorarioIndisponivelError:
         return _erro(state, 409, "Horário já está ocupado.", "horario_indisponivel")
     except SupabaseConfigurationError:
@@ -120,7 +174,7 @@ def executar_agendamento(state: AgendamentoState) -> AgendamentoState:
         **state,
         "sucesso": True,
         "status_http": 201,
-        "mensagem": "Agendamento realizado com sucesso.",
+        "mensagem_resposta": "Agendamento realizado com sucesso.",
         "agendamento": resultado,
         "erro": None,
     }
@@ -131,7 +185,7 @@ def responder_sucesso(state: AgendamentoState) -> AgendamentoState:
         **state,
         "sucesso": True,
         "status_http": 201,
-        "mensagem": "Agendamento realizado com sucesso.",
+        "mensagem_resposta": "Agendamento realizado com sucesso.",
     }
 
 
@@ -140,7 +194,8 @@ def responder_erro(state: AgendamentoState) -> AgendamentoState:
         **state,
         "sucesso": False,
         "status_http": state.get("status_http", 500),
-        "mensagem": state.get("mensagem") or "Não foi possível realizar o agendamento.",
+        "mensagem_resposta": state.get("mensagem_resposta")
+        or "Não foi possível realizar o agendamento.",
         "agendamento": None,
     }
 
@@ -148,17 +203,17 @@ def responder_erro(state: AgendamentoState) -> AgendamentoState:
 def _criar_schema(state: AgendamentoState) -> AgendamentoCreate:
     return AgendamentoCreate(
         colaborador_id=state["colaborador_id"],
-        massoterapeuta_id=state["massoterapeuta_id"],
-        horario_id=state["horario_id"],
+        massoterapeuta_id=state.get("massoterapeuta_id"),
+        horario_id=state.get("horario_id"),
     )
 
 
 def _criar_contexto(state: AgendamentoState) -> AgendamentoContexto:
     return AgendamentoContexto(
-        colaborador=state["colaborador"] or {},
-        massoterapeuta=state["massoterapeuta"] or {},
-        horario=state["horario"] or {},
-        data_agendamento=date.fromisoformat(state["data_agendamento"] or ""),
+        colaborador=state.get("colaborador") or {},
+        massoterapeuta=state.get("massoterapeuta") or {},
+        horario=state.get("horario") or {},
+        data_agendamento=date.fromisoformat(state.get("data_agendamento") or ""),
     )
 
 
@@ -172,7 +227,7 @@ def _erro(
         **state,
         "sucesso": False,
         "status_http": status_http,
-        "mensagem": mensagem,
+        "mensagem_resposta": mensagem,
         "agendamento": None,
         "erro": erro,
     }
