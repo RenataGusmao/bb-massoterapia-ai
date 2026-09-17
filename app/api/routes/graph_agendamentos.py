@@ -46,13 +46,19 @@ def cadastrar_agendamento_com_grafo(requisicao: AgendamentoGraphRequest):
             "agendamento": resultado["agendamento"],
         }
 
+    conteudo = {
+        "sucesso": False,
+        "mensagem": resultado.get(
+            "mensagem_resposta", "Não foi possível realizar o agendamento."
+        ),
+        "erro": resultado.get("erro"),
+    }
+
+    sugestoes = resultado.get("sugestoes")
+    if sugestoes:
+        conteudo["sugestoes"] = sugestoes
+
     return JSONResponse(
         status_code=resultado.get("status_http", status.HTTP_500_INTERNAL_SERVER_ERROR),
-        content={
-            "sucesso": False,
-            "mensagem": resultado.get(
-                "mensagem_resposta", "Não foi possível realizar o agendamento."
-            ),
-            "erro": resultado.get("erro"),
-        },
+        content=conteudo,
     )

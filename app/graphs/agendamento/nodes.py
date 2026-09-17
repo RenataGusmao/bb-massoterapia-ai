@@ -35,6 +35,7 @@ def receber_solicitacao(state: AgendamentoState) -> AgendamentoState:
         "mensagem_resposta": "Solicitação recebida.",
         "agendamento": None,
         "erro": None,
+        "sugestoes": None,
     }
 
 
@@ -76,6 +77,7 @@ def interpretar_solicitacao(state: AgendamentoState) -> AgendamentoState:
             422,
             interpretacao.motivo or "Não foi possível entender o pedido.",
             "interpretacao_inconclusiva",
+            sugestoes=interpretacao.sugestoes,
         )
 
     return {
@@ -222,6 +224,7 @@ def _erro(
     status_http: int,
     mensagem: str,
     erro: str,
+    sugestoes: list[dict] | None = None,
 ) -> AgendamentoState:
     return {
         **state,
@@ -230,4 +233,5 @@ def _erro(
         "mensagem_resposta": mensagem,
         "agendamento": None,
         "erro": erro,
+        "sugestoes": sugestoes,
     }
