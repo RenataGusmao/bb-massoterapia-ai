@@ -1,7 +1,9 @@
+from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.core.security import verificar_api_key
 from app.database.repositories.horarios import (
     buscar_horario_por_id,
     criar_horario,
@@ -14,9 +16,22 @@ router = APIRouter(prefix="/horarios", tags=["horarios"])
 
 
 @router.get("", response_model=list[HorarioResponse])
-def obter_horarios() -> list[dict]:
+def obter_horarios(
+    disponivel: bool | None = Query(
+        default=None,
+        description="true lista só os livres, false só os ocupados, omitido lista todos.",
+    ),
+    massoterapeuta_id: UUID | None = Query(default=None),
+    data_inicio: date | None = Query(default=None, description="Formato AAAA-MM-DD."),
+    data_fim: date | None = Query(default=None, description="Formato AAAA-MM-DD."),
+) -> list[dict]:
     try:
-        return listar_horarios()
+        return listar_horarios(
+            apenas_disponiveis=disponivel,
+            massoterapeuta_id=massoterapeuta_id,
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+        )
     except SupabaseConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -29,7 +44,12 @@ def obter_horarios() -> list[dict]:
         ) from exc
 
 
-@router.post("", response_model=HorarioResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=HorarioResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verificar_api_key)],
+)
 def cadastrar_horario(horario: HorarioCreate) -> dict:
     try:
         return criar_horario(horario)

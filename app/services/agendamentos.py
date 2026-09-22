@@ -4,6 +4,8 @@ from uuid import UUID
 
 from app.database.repositories.colaboradores import buscar_colaborador_por_id
 from app.database.repositories.agendamentos import (
+    atualizar_status_agendamento,
+    buscar_agendamento_por_id,
     buscar_agendamentos_validos_no_intervalo,
     criar_agendamento,
 )
@@ -45,6 +47,14 @@ class HorarioIndisponivelError(ValueError):
 
 
 class HorarioMassoterapeutaInvalidoError(ValueError):
+    pass
+
+
+class AgendamentoNaoEncontradoError(ValueError):
+    pass
+
+
+class StatusInvalidoError(ValueError):
     pass
 
 
@@ -171,3 +181,31 @@ def criar_agendamento_para_horario(agendamento: AgendamentoCreate) -> dict:
     contexto = validar_entidades_agendamento(agendamento)
     validar_intervalo_agendamento(agendamento, contexto)
     return executar_criacao_agendamento(agendamento, contexto)
+
+
+def alterar_status_agendamento(agendamento_id: UUID, novo_status: AgendamentoStatus) -> dict:
+    """Muda o status de um agendamento (ex.: cancelar, concluir, marcar falta).
+
+    A validação definitiva e a liberação do horário (no caso de cancelamento)
+    acontecem dentro da RPC do Postgres, de forma transacional.
+    """
+    agendamento_existente = buscar_agendamento_por_id(agendamento_id)
+    if agendamento_existente is None:
+        raise AgendamentoNaoEncontradoError("Agendamento não encontrado.")
+
+    status_valor = (
+        novo_status.value if isinstance(novo_status, AgendamentoStatus) else str(novo_status)
+    )
+
+    valores_validos = {item.value for item in AgendamentoStatus}
+    if status_valor not in valores_validos:
+        raise StatusInvalidoError(f"Status inválido: {status_valor}.")
+
+    resultado = atualizar_status_agendamento(agendamento_id, status_valor)
+
+    if not resultado:
+        raise StatusInvalidoError(
+            "Não foi possível atualizar o status (transição inválida ou agendamento indisponível)."
+        )
+
+    return resultado

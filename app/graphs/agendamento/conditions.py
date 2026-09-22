@@ -1,8 +1,14 @@
 from app.graphs.agendamento.state import AgendamentoState
 
 
+def decidir_apos_interpretacao(state: AgendamentoState) -> str:
+    if state.get("erro") is None:
+        return "continuar"
+
+    return "erro"
+
+
 def decidir_apos_validacao_entidades(state: AgendamentoState) -> str:
-    # Conditional Edge escolhe o próximo nó com base no estado atual do fluxo.
     if state.get("entidades_validas") is True:
         return "continuar"
 
@@ -10,7 +16,6 @@ def decidir_apos_validacao_entidades(state: AgendamentoState) -> str:
 
 
 def decidir_apos_intervalo(state: AgendamentoState) -> str:
-    # Conditional Edge escolhe o próximo nó com base no estado atual do fluxo.
     if state.get("intervalo_permitido") is True:
         return "continuar"
 
@@ -18,7 +23,6 @@ def decidir_apos_intervalo(state: AgendamentoState) -> str:
 
 
 def decidir_apos_execucao(state: AgendamentoState) -> str:
-    # Conditional Edge escolhe o próximo nó com base no estado atual do fluxo.
     if state.get("sucesso") is True:
         return "sucesso"
 
