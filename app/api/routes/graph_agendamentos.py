@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
-from app.core.security import verificar_api_key
+from app.core.security import get_current_user
 from app.graphs.agendamento.graph import agendamento_graph
 from app.graphs.agendamento.state import AgendamentoState
 from app.schemas.agendamento import AgendamentoGraphRequest
@@ -24,7 +24,7 @@ AGENDAMENTO_GRAPH_RESPONSES = {
     response_model=None,
     status_code=status.HTTP_201_CREATED,
     responses=AGENDAMENTO_GRAPH_RESPONSES,
-    dependencies=[Depends(verificar_api_key)],
+    dependencies=[Depends(get_current_user)],
 )
 def cadastrar_agendamento_com_grafo(requisicao: AgendamentoGraphRequest):
     state_inicial: AgendamentoState = {

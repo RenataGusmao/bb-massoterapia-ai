@@ -6,11 +6,12 @@ from app.core.config import get_settings
 
 
 settings = get_settings()
+settings.require_jwt_secret()
 
 app = FastAPI(
     title="BB Massoterapia AI",
     description="API REST do MVP BB Massoterapia AI, preparada para deploy em nuvem.",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 app.add_middleware(

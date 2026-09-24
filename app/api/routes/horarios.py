@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.security import verificar_api_key
+from app.core.security import require_admin
 from app.database.repositories.horarios import (
     buscar_horario_por_id,
     criar_horario,
@@ -48,7 +48,7 @@ def obter_horarios(
     "",
     response_model=HorarioResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(verificar_api_key)],
+    dependencies=[Depends(require_admin)],
 )
 def cadastrar_horario(horario: HorarioCreate) -> dict:
     try:

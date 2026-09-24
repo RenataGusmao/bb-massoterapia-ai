@@ -20,6 +20,9 @@ class Settings:
     gemini_model: str
     allowed_origins: tuple[str, ...]
     api_key: str | None
+    jwt_secret_key: str | None
+    jwt_algorithm: str
+    jwt_access_token_expire_minutes: int
 
     def require_supabase(self) -> tuple[str, str]:
         if not self.supabase_url or not self.supabase_secret_key:
@@ -37,6 +40,14 @@ class Settings:
 
         return self.google_api_key
 
+    def require_jwt_secret(self) -> str:
+        if not self.jwt_secret_key:
+            raise SettingsError(
+                "JWT_SECRET_KEY deve estar configurada para usar a autenticação."
+            )
+
+        return self.jwt_secret_key
+
     @property
     def auth_habilitada(self) -> bool:
         return bool(self.api_key)
@@ -50,6 +61,21 @@ def _parse_origins(valor: str | None) -> tuple[str, ...]:
     return origens or ("*",)
 
 
+def _parse_positive_int(nome: str, valor: str | None, padrao: int) -> int:
+    if valor is None:
+        return padrao
+
+    try:
+        numero = int(valor)
+    except ValueError as exc:
+        raise SettingsError(f"{nome} deve ser um número inteiro.") from exc
+
+    if numero <= 0:
+        raise SettingsError(f"{nome} deve ser maior que zero.")
+
+    return numero
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings(
@@ -59,4 +85,11 @@ def get_settings() -> Settings:
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest"),
         allowed_origins=_parse_origins(os.getenv("ALLOWED_ORIGINS")),
         api_key=os.getenv("API_KEY") or None,
+        jwt_secret_key=os.getenv("JWT_SECRET_KEY") or None,
+        jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
+        jwt_access_token_expire_minutes=_parse_positive_int(
+            "JWT_ACCESS_TOKEN_EXPIRE_MINUTES",
+            os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES"),
+            60,
+        ),
     )

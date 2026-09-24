@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.routes import (
     agendamentos,
+    auth,
     colaboradores,
     graph_agendamentos,
     horarios,
@@ -10,6 +11,7 @@ from app.api.routes import (
 from app.database.supabase import SupabaseConfigurationError, check_database_connection
 
 api_router = APIRouter()
+api_router.include_router(auth.router)
 api_router.include_router(colaboradores.router)
 api_router.include_router(massoterapeutas.router)
 api_router.include_router(horarios.router)

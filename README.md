@@ -2,7 +2,7 @@
 
 API REST do MVP **BB Massoterapia AI**, criada em Python com FastAPI e preparada desde o início para hospedagem em nuvem, preferencialmente no Render.
 
-Neste momento, o projeto possui a estrutura base da API, integração com Supabase PostgreSQL, fluxo básico de agendamento de massoterapia e regra de intervalo mínimo de 15 dias. Agentes de IA, autenticação, notificações, feedbacks e regras mais avançadas serão adicionados somente em etapas futuras.
+Neste momento, o projeto possui integração com Supabase PostgreSQL, autenticação JWT própria, controle básico de acesso por perfil, fluxo de agendamento com LangGraph/Gemini e regra de intervalo mínimo de 15 dias.
 
 ## Estrutura
 
@@ -75,7 +75,17 @@ Preencha no `.env`:
 ```env
 SUPABASE_URL=
 SUPABASE_SECRET_KEY=
+GOOGLE_API_KEY=
+GEMINI_MODEL=gemini-flash-latest
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+API_KEY=
+JWT_SECRET_KEY=
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60
+PORT=8000
 ```
+
+`JWT_SECRET_KEY` é obrigatória. Gere um segredo longo e aleatório para cada ambiente e nunca o inclua no repositório.
 
 Execute a API localmente:
 
@@ -94,8 +104,8 @@ http://127.0.0.1:8000
 1. Crie um projeto no Supabase.
 2. Acesse o painel do projeto.
 3. Abra o SQL Editor.
-4. Copie o conteúdo de `database/schema.sql`.
-5. Execute o script no Supabase.
+4. Execute o conteúdo de `database/schema.sql`.
+5. Execute o conteúdo de `database/auth_schema.sql`.
 
 O schema inicial cria as tabelas:
 
@@ -103,6 +113,7 @@ O schema inicial cria as tabelas:
 - `massoterapeutas`
 - `horarios_disponiveis`
 - `agendamentos`
+- `usuarios`
 
 Os IDs são UUIDs gerados pelo PostgreSQL/Supabase. O status inicial dos agendamentos aceita:
 
@@ -117,16 +128,89 @@ Esta é a primeira versão do banco. A regra de negócio dos 15 dias está imple
 
 A reserva do horário e a criação do agendamento ainda não são executadas dentro de uma transação PostgreSQL única. Existe um risco residual de o horário ficar indisponível caso o processo falhe depois da reserva e antes da criação do agendamento. Essa consistência deverá ser corrigida futuramente com uma função/RPC transacional no PostgreSQL.
 
+## Autenticação JWT
+
+O login é realizado em `POST /auth/login` com e-mail e senha. A API valida o hash Argon2 persistido na tabela `usuarios` e retorna um JWT Bearer. O endpoint `GET /auth/me` consulta novamente o usuário no banco, portanto bloqueios e mudanças de perfil passam a valer sem esperar o token expirar.
+
+Fluxo:
+
+```text
+login
+→ valida usuário e senha
+→ gera JWT
+→ cliente envia Authorization: Bearer <token>
+→ FastAPI valida assinatura e expiração
+→ consulta o usuário ativo no banco
+→ libera ou bloqueia a rota conforme o perfil
+```
+
+Para gerar o hash do primeiro usuário, com o ambiente virtual ativo:
+
+```bash
+python -c "from app.core.security import gerar_hash_senha; print(gerar_hash_senha('troque-esta-senha'))"
+```
+
+Insira somente o hash retornado em `senha_hash`:
+
+```sql
+insert into usuarios (colaborador_id, email, senha_hash, role)
+values ('UUID_DO_COLABORADOR', 'admin@example.com', 'HASH_ARGON2_GERADO', 'admin');
+```
+
+Não existe endpoint público de cadastro de usuários nesta versão.
+
+Rotas públicas:
+
+- `GET /`
+- `GET /health`
+- `GET /health/db`
+- `POST /auth/login`
+- `GET /colaboradores`
+- `POST /colaboradores`
+- `GET /colaboradores/{colaborador_id}`
+- `GET /massoterapeutas`
+- `GET /massoterapeutas/{massoterapeuta_id}`
+- `GET /horarios`
+- `GET /horarios/{horario_id}`
+
+Rotas para usuário autenticado:
+
+- `GET /auth/me`
+- `POST /agendamentos`
+- `GET /agendamentos/{agendamento_id}`
+- `POST /graph/agendamentos`
+
+Rotas exclusivas de administrador:
+
+- `GET /agendamentos`
+- `PATCH /agendamentos/{agendamento_id}/status`
+- `POST /horarios`
+- `POST /massoterapeutas`
+
+Nesta primeira versão, `colaborador_id` ainda é recebido no payload de agendamento. A próxima etapa de autorização por ownership deve substituir esse valor pelo `colaborador_id` do usuário autenticado, inclusive no endpoint LangGraph. Até isso ser implementado, autenticação não impede um usuário de informar o ID de outro colaborador.
+
+A dependência antiga de `x-api-key` foi mantida temporariamente no código para compatibilidade, mas não é exigida junto com JWT nas rotas migradas.
+
 ## Variáveis De Ambiente
 
 O projeto considera a variável `PORT`, usada por plataformas de nuvem como o Render.
 
-Para conexão com o Supabase:
+Variáveis reconhecidas:
 
 ```env
 SUPABASE_URL=
 SUPABASE_SECRET_KEY=
+GOOGLE_API_KEY=
+GEMINI_MODEL=gemini-flash-latest
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+API_KEY=
+JWT_SECRET_KEY=
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60
+PORT=8000
 ```
+
+`API_KEY` é opcional e existe somente para compatibilidade temporária com integrações legadas. `JWT_ALGORITHM` e `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` possuem os valores padrão mostrados; `JWT_SECRET_KEY` não possui valor padrão.
 
 Não coloque credenciais reais no Git. Em ambiente local, preencha esses valores apenas no arquivo `.env`, que já está ignorado pelo `.gitignore`.
 
@@ -140,12 +224,15 @@ O arquivo `render.yaml` já define um serviço web Python com:
 - inicialização com `uvicorn app.main:app --host 0.0.0.0 --port $PORT`;
 - variável `PYTHON_VERSION`.
 
-No serviço do Render, cadastre as variáveis:
+No serviço do Render, cadastre ao menos as variáveis:
 
 ```text
 SUPABASE_URL
 SUPABASE_SECRET_KEY
+JWT_SECRET_KEY
 ```
+
+Cadastre também `GOOGLE_API_KEY` para usar a interpretação de linguagem natural do fluxo Gemini e ajuste as demais variáveis conforme o ambiente.
 
 Depois de salvar as variáveis, faça um novo deploy pelo Render quando quiser ativar a conexão no ambiente publicado.
 
@@ -220,9 +307,17 @@ Documentação automática da API:
 http://127.0.0.1:8000/docs
 ```
 
+Para testar a autenticação no Swagger:
+
+1. Execute `POST /auth/login` com e-mail e senha válidos.
+2. Copie o valor de `access_token` da resposta.
+3. Clique em **Authorize** no topo do Swagger.
+4. Cole apenas o token no campo do esquema HTTP Bearer; o Swagger adiciona o prefixo `Bearer`.
+5. Confirme em **Authorize** e execute os endpoints protegidos.
+
 ## LangGraph — Fluxo De Agendamento
 
-Esta implementação usa LangGraph para orquestrar o processo de agendamento de forma determinística. Não há LLM, OpenAI, Gemini, chatbot, agentes autônomos, memória ou checkpointer nesta etapa.
+Esta implementação usa LangGraph para orquestrar o processo de agendamento. Quando a requisição traz apenas uma mensagem em linguagem natural, o interpretador usa Gemini; quando IDs estruturados são enviados, o fluxo não precisa chamar o modelo.
 
 Conceitos principais:
 

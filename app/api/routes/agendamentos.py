@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.core.security import verificar_api_key
+from app.core.security import get_current_user, require_admin
 from app.database.repositories.agendamentos import (
     buscar_agendamento_por_id,
     listar_agendamentos,
@@ -39,7 +39,11 @@ AGENDAMENTO_POST_RESPONSES = {
 }
 
 
-@router.get("", response_model=list[AgendamentoResponse])
+@router.get(
+    "",
+    response_model=list[AgendamentoResponse],
+    dependencies=[Depends(require_admin)],
+)
 def obter_agendamentos() -> list[dict]:
     try:
         return listar_agendamentos()
@@ -60,7 +64,7 @@ def obter_agendamentos() -> list[dict]:
     response_model=AgendamentoResponse,
     status_code=status.HTTP_201_CREATED,
     responses=AGENDAMENTO_POST_RESPONSES,
-    dependencies=[Depends(verificar_api_key)],
+    dependencies=[Depends(get_current_user)],
 )
 def cadastrar_agendamento(agendamento: AgendamentoCreate) -> dict:
     try:
@@ -115,7 +119,7 @@ def cadastrar_agendamento(agendamento: AgendamentoCreate) -> dict:
 @router.patch(
     "/{agendamento_id}/status",
     response_model=AgendamentoResponse,
-    dependencies=[Depends(verificar_api_key)],
+    dependencies=[Depends(require_admin)],
     responses={
         404: {"description": "Agendamento não encontrado."},
         422: {"description": "Status inválido."},
@@ -150,7 +154,11 @@ def alterar_status(agendamento_id: UUID, payload: AgendamentoStatusUpdate) -> di
         ) from exc
 
 
-@router.get("/{agendamento_id}", response_model=AgendamentoResponse)
+@router.get(
+    "/{agendamento_id}",
+    response_model=AgendamentoResponse,
+    dependencies=[Depends(get_current_user)],
+)
 def obter_agendamento_por_id(agendamento_id: UUID) -> dict:
     try:
         agendamento = buscar_agendamento_por_id(agendamento_id)
