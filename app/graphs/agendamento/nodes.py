@@ -35,17 +35,10 @@ def receber_solicitacao(state: AgendamentoState) -> AgendamentoState:
         "mensagem_resposta": "Solicitação recebida.",
         "agendamento": None,
         "erro": None,
-        "sugestoes": None,
     }
 
 
 def interpretar_solicitacao(state: AgendamentoState) -> AgendamentoState:
-    """Node de IA.
-
-    So entra em acao quando o cliente NAO mandou os ids. Se eles ja vieram
-    prontos, o node apenas repassa o estado e nenhuma chamada ao modelo
-    acontece, o que economiza cota do free tier.
-    """
     if state.get("horario_id") and state.get("massoterapeuta_id"):
         return {
             **state,
@@ -77,7 +70,6 @@ def interpretar_solicitacao(state: AgendamentoState) -> AgendamentoState:
             422,
             interpretacao.motivo or "Não foi possível entender o pedido.",
             "interpretacao_inconclusiva",
-            sugestoes=interpretacao.sugestoes,
         )
 
     return {
@@ -224,7 +216,6 @@ def _erro(
     status_http: int,
     mensagem: str,
     erro: str,
-    sugestoes: list[dict] | None = None,
 ) -> AgendamentoState:
     return {
         **state,
@@ -233,5 +224,4 @@ def _erro(
         "mensagem_resposta": mensagem,
         "agendamento": None,
         "erro": erro,
-        "sugestoes": sugestoes,
     }

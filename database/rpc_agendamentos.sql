@@ -1,8 +1,3 @@
-
-
--- ---------------------------------------------------------------------
--- 1. Criacao de agendamento (validacao + reserva + insert, atomico)
--- ---------------------------------------------------------------------
 create or replace function criar_agendamento_transacional(
     p_colaborador_id uuid,
     p_massoterapeuta_id uuid,
@@ -17,7 +12,7 @@ declare
     v_conflito date;
     v_agendamento agendamentos%rowtype;
 begin
-    
+
     select * into v_horario
     from horarios_disponiveis
     where id = p_horario_id
@@ -51,7 +46,6 @@ begin
         return jsonb_build_object('sucesso', false, 'erro', 'horario_indisponivel');
     end if;
 
-    
     select data_agendamento into v_conflito
     from agendamentos
     where colaborador_id = p_colaborador_id
@@ -100,11 +94,6 @@ begin
 end;
 $$;
 
-
--- ---------------------------------------------------------------------
--- 2. Mudanca de status (cancelar / concluir / faltou)
---    Ao cancelar, o horario volta a ficar disponivel na mesma transacao.
--- ---------------------------------------------------------------------
 create or replace function atualizar_status_agendamento(
     p_agendamento_id uuid,
     p_status varchar
@@ -138,7 +127,6 @@ begin
     where id = p_agendamento_id
     returning * into v_agendamento;
 
-    
     if p_status = 'CANCELADO' then
         update horarios_disponiveis
         set disponivel = true

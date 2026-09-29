@@ -24,12 +24,6 @@ class AgendamentoStatusUpdate(BaseModel):
 
 
 class AgendamentoGraphRequest(BaseModel):
-    """Aceita os dois caminhos do grafo.
-
-    Estruturado: colaborador_id + massoterapeuta_id + horario_id.
-    Com IA:      colaborador_id + mensagem em texto livre.
-    """
-
     colaborador_id: UUID
     massoterapeuta_id: UUID | None = None
     horario_id: UUID | None = None

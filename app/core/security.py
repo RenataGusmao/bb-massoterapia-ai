@@ -4,7 +4,6 @@ from app.core.config import get_settings
 
 
 def verificar_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    
     settings = get_settings()
 
     if not settings.auth_habilitada:

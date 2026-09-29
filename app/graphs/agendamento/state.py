@@ -2,7 +2,6 @@ from typing import Any, NotRequired, TypedDict
 
 
 class AgendamentoState(TypedDict):
-
     colaborador_id: str
 
     massoterapeuta_id: NotRequired[str | None]
@@ -10,7 +9,6 @@ class AgendamentoState(TypedDict):
 
     mensagem: NotRequired[str | None]
     interpretacao: NotRequired[str | None]
-    sugestoes: NotRequired[list[dict[str, Any]] | None]
 
     colaborador: NotRequired[dict[str, Any] | None]
     massoterapeuta: NotRequired[dict[str, Any] | None]

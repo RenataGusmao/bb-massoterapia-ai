@@ -78,11 +78,6 @@ def atualizar_disponibilidade_horario(horario_id: UUID, disponivel: bool) -> dic
 
 
 def reservar_horario_disponivel(horario_id: UUID) -> dict | None:
-    """Mantido apenas como fallback.
-
-    O caminho oficial de reserva passou a ser a RPC transacional
-    criar_agendamento_transacional (ver database/rpc_agendamentos.sql).
-    """
     response = (
         get_supabase_client()
         .table("horarios_disponiveis")
