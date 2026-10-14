@@ -14,8 +14,12 @@ class AgendamentoStatus(StrEnum):
 
 
 class AgendamentoCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{
+        "colaborador_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "horario_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    }]})
+
     colaborador_id: UUID
-    massoterapeuta_id: UUID | None = None
     horario_id: UUID
 
 
@@ -30,8 +34,14 @@ class AgendamentoGraphRequest(BaseModel):
     Com IA:      colaborador_id + mensagem em texto livre.
     """
 
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [
+        {"colaborador_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+         "horario_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+        {"colaborador_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+         "mensagem": "Quero massagem quinta de manha."},
+    ]})
+
     colaborador_id: UUID
-    massoterapeuta_id: UUID | None = None
     horario_id: UUID | None = None
     mensagem: str | None = Field(
         default=None,

@@ -171,16 +171,7 @@ def validar_entidades_agendamento(agendamento: AgendamentoCreate) -> Agendamento
     if not horario.get("disponivel"):
         raise HorarioIndisponivelError("Horário indisponível.")
 
-    profissional_historico = horario.get("massoterapeuta_id")
-    if (
-        profissional_historico and agendamento.massoterapeuta_id
-        and str(profissional_historico) != str(agendamento.massoterapeuta_id)
-    ):
-        raise HorarioMassoterapeutaInvalidoError(
-            "Horário não pertence ao massoterapeuta informado."
-        )
-
-    profissional_id = profissional_historico or agendamento.massoterapeuta_id
+    profissional_id = horario.get("massoterapeuta_id")
     massoterapeuta = {}
     if profissional_id:
         massoterapeuta = buscar_massoterapeuta_por_id(UUID(str(profissional_id)))
@@ -213,7 +204,7 @@ def executar_criacao_agendamento(
     # The graph's context is advisory; the RPC revalidates under database locks.
     try:
         return criar_agendamento_transacional(
-            agendamento.colaborador_id, agendamento.massoterapeuta_id, agendamento.horario_id
+            agendamento.colaborador_id, None, agendamento.horario_id
         )
 
     except AgendamentoRPCError as exc:

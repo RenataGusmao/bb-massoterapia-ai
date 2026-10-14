@@ -5,11 +5,14 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 
 
 class HorarioCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{
+        "chave_idempotencia": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "data": "2099-01-01", "hora_inicio": "09:00", "hora_fim": "09:30",
+        "capacidade": 2, "disponivel": True,
+    }]})
 
     chave_idempotencia: UUID
     capacidade: int = Field(default=1, strict=True, ge=1, le=500)
-    massoterapeuta_id: UUID | None = None
     data: date
     hora_inicio: time
     hora_fim: time

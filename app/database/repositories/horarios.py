@@ -77,7 +77,7 @@ def criar_horario(horario: HorarioCreate) -> DisponibilidadeRPCResponse:
         "p_hora_inicio": horario.hora_inicio.isoformat(),
         "p_hora_fim": horario.hora_fim.isoformat(),
         "p_capacidade": horario.capacidade,
-        "p_massoterapeuta_id": str(horario.massoterapeuta_id) if horario.massoterapeuta_id else None,
+        "p_massoterapeuta_id": None,
         "p_disponivel": horario.disponivel,
     }
     try:

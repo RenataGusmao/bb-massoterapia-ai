@@ -30,7 +30,7 @@ Apenas admin utiliza POST /horarios:
 }
 ```
 
-A chave UUID deve ser gerada pelo cliente para cada cadastro lógico e reutilizada nos retries. capacidade aceita inteiros de 1 a 500 e tem padrão 1. massoterapeuta_id e disponivel são opcionais; disponivel tem padrão true. Não existe role gestor nesta versão: o gestor opera com perfil admin.
+A chave UUID deve ser gerada pelo cliente para cada cadastro lógico e reutilizada nos retries. capacidade aceita inteiros de 1 a 500 e tem padrão 1. disponivel e opcional, com padrao true. massoterapeuta_id nao faz parte do contrato de entrada; envia-lo, mesmo null, recebe 422. Nao existe role gestor nesta versao: o gestor opera com perfil admin.
 
 Resposta 201: id do lote, data, hora_inicio, hora_fim, capacidade e lista vagas. Cada vaga contém seu próprio id, disponibilidade_id, numero_vaga, disponivel, timestamps e massoterapeuta_id nullable.
 
@@ -57,13 +57,17 @@ POST /agendamentos:
 }
 ```
 
-O backend confere ownership, atividade, data, vaga e intervalo de 15 dias na transação. massoterapeuta_id é opcional para compatibilidade: quando há vínculo histórico na vaga, ele é preservado e não pode ser substituído por um ID diferente. Não há exigência de associar profissional posteriormente.
+O backend confere ownership, atividade, data, vaga e intervalo de 15 dias na transacao. O contrato de entrada aceita somente colaborador_id e horario_id; massoterapeuta_id recebe 422, mesmo null. O campo permanece no banco e nas respostas: o vinculo historico da vaga e preservado automaticamente pela RPC, sem selecao de profissional pelo cliente.
 
 Cancelamento libera somente horario_id. Outra vaga do mesmo lote não é afetada. Estados finais não são reativados. Reserva, cancelamento, índice único parcial e exclusão dos 15 dias seguem as garantias da etapa 2.
 
 ## LangGraph
 
 POST /graph/agendamentos aceita colaborador_id e horario_id sem profissional, dispensando LLM. Também aceita colaborador_id e mensagem em linguagem natural.
+
+massoterapeuta_id tambem nao e aceito no corpo do grafo. Os exemplos OpenAPI dos
+tres endpoints seguem estes contratos, sem esse campo. O prompt solicita apenas
+a escolha da vaga; metadados historicos nao sao usados como entrada do cliente.
 
 O prompt escolhe apenas horario_id de uma vaga existente. Sugestões podem conter profissional nulo. A data local usada no prompt e nos filtros é America/Sao_Paulo. tzdata foi acrescentado para suportar esse fuso também no Windows.
 
