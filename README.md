@@ -4,6 +4,19 @@ API REST do MVP **BB Massoterapia AI**, criada em Python com FastAPI e preparada
 
 Neste momento, o projeto possui integração com Supabase PostgreSQL, autenticação JWT própria, controle básico de acesso por perfil, fluxo de agendamento com LangGraph/Gemini e regra de intervalo mínimo de 15 dias.
 
+## Acesso Institucional
+
+A etapa 4 adiciona a role `terceirizada`, provisionamento administrativo em
+`POST /auth/terceirizadas` e agenda minimizada em `GET /agenda/terceirizada`.
+O admin atribui lotes explicitamente; nao ha acesso global nem cadastro publico.
+As consultas gerais de horarios e profissionais agora exigem JWT admin/colaborador.
+Consulte [contratos, migration 004 e exemplos Swagger](database/README_terceirizada.md).
+Migrations pendentes devem ser aplicadas manualmente na ordem 001 -> 002 -> 003 -> 004 -> 005.
+Nenhuma foi executada no Supabase real. Consulte o
+[guia de seguranca e manutencao](database/README_seguranca.md) antes da aplicacao:
+a 005 fecha o acesso direto aos objetos da aplicacao e instala os grants explicitos
+do servidor, preservando defaults e mecanismos internos administrados pelo Supabase.
+
 ## Estrutura
 
 ```text
@@ -106,6 +119,8 @@ http://127.0.0.1:8000
 3. Abra o SQL Editor.
 4. Execute o conteúdo de `database/schema.sql`.
 5. Execute o conteúdo de `database/auth_schema.sql`.
+6. Execute as migrations 001 -> 002 -> 003 -> 004 -> 005, com clientes bloqueados
+   durante toda a sequencia. Execute os diagnosticos e siga README_seguranca.md.
 
 O schema inicial cria as tabelas:
 
@@ -114,6 +129,8 @@ O schema inicial cria as tabelas:
 - `horarios_disponiveis`
 - `agendamentos`
 - `usuarios`
+- `disponibilidades`
+- `usuarios_agenda_lotes` (migration 004)
 
 Os IDs são UUIDs gerados pelo PostgreSQL/Supabase. O status inicial dos agendamentos aceita:
 
@@ -122,11 +139,13 @@ Os IDs são UUIDs gerados pelo PostgreSQL/Supabase. O status inicial dos agendam
 - `CONCLUIDO`
 - `FALTOU`
 
-Esta é a primeira versão do banco. A regra de negócio dos 15 dias está implementada na camada de services.
+O intervalo de 15 dias é verificado na RPC e reforçado por constraint de exclusão no PostgreSQL. O service mantém uma pré-validação para o grafo; a decisão definitiva ocorre na transação.
 
 ## Pendências Técnicas
 
-A reserva do horário e a criação do agendamento ainda não são executadas dentro de uma transação PostgreSQL única. Existe um risco residual de o horário ficar indisponível caso o processo falhe depois da reserva e antes da criação do agendamento. Essa consistência deverá ser corrigida futuramente com uma função/RPC transacional no PostgreSQL.
+A criação usa a RPC `criar_agendamento_transacional`: validações, reserva e inserção acontecem na mesma transação. Cancelamentos preservam o histórico e permitem reutilização da vaga. Em bancos existentes, aplique as migrations 001 -> 002 -> 003 -> 004 -> 005 antes de executar o backend atualizado.
+
+Consulte [database/README_agendamentos.md](database/README_agendamentos.md) para diagnóstico, ordem de aplicação, transições de status e testes reais de concorrência.
 
 ## Autenticação JWT
 
@@ -165,29 +184,68 @@ Rotas públicas:
 - `GET /health`
 - `GET /health/db`
 - `POST /auth/login`
-- `GET /colaboradores`
-- `POST /colaboradores`
-- `GET /colaboradores/{colaborador_id}`
-- `GET /massoterapeutas`
-- `GET /massoterapeutas/{massoterapeuta_id}`
-- `GET /horarios`
-- `GET /horarios/{horario_id}`
 
 Rotas para usuário autenticado:
 
 - `GET /auth/me`
+- `GET /colaboradores/{colaborador_id}` (somente o próprio cadastro; admin pode consultar todos)
+- `GET /agendamentos/me` (filtrado pelo vínculo do usuário)
 - `POST /agendamentos`
 - `GET /agendamentos/{agendamento_id}`
 - `POST /graph/agendamentos`
+- `GET /massoterapeutas` e detalhe (admin ou colaborador)
+- `GET /horarios` e detalhe (admin ou colaborador)
+
+A terceirizada acessa somente `GET /auth/me` e `GET /agenda/terceirizada`
+com seu JWT. O login e as rotas tecnicas publicas continuam disponiveis.
+Ela nao acessa consultas administrativas, agendamentos individuais ou escritas.
 
 Rotas exclusivas de administrador:
 
 - `GET /agendamentos`
+- `GET /colaboradores`
+- `POST /colaboradores`
+- `POST /auth/colaboradores`
+- `POST /auth/terceirizadas`
 - `PATCH /agendamentos/{agendamento_id}/status`
 - `POST /horarios`
 - `POST /massoterapeutas`
 
-Nesta primeira versão, `colaborador_id` ainda é recebido no payload de agendamento. A próxima etapa de autorização por ownership deve substituir esse valor pelo `colaborador_id` do usuário autenticado, inclusive no endpoint LangGraph. Até isso ser implementado, autenticação não impede um usuário de informar o ID de outro colaborador.
+O payload de agendamento continua recebendo `colaborador_id` para preservar o contrato existente. Para role colaborador, a API exige que esse ID corresponda ao vínculo autenticado, tanto no endpoint tradicional quanto no endpoint LangGraph, antes de executar o fluxo. Tentativas em nome de terceiros retornam 403. Consultas de agendamentos de terceiros retornam 404, sem revelar sua existência. Admin mantém acesso aos cadastros e agendamentos de todos.
+
+### Contas Individuais De Colaboradores
+
+JWT exige `sub`, `exp` e `role`: sub UUID textual, exp inteiro e role uma das
+tres existentes. O perfil atual no banco prevalece na autorizacao.
+Email nao textual recebe 422. Hash persistido invalido recebe 401 sem detalhes.
+RLS e grants impedem as roles SQL anon/authenticated de contornar o FastAPI;
+service_role usa a allowlist descrita no guia de seguranca.
+
+Um admin autenticado provisiona a conta de um colaborador existente e ativo:
+
+```http
+POST /auth/colaboradores
+Authorization: Bearer <TOKEN_ADMIN>
+Content-Type: application/json
+
+{"colaborador_id": "<UUID_COLABORADOR>", "senha": "<SENHA_FORTE_COM_12_OU_MAIS_CARACTERES>"}
+```
+
+A API usa o e-mail do cadastro existente, fixa a role em `colaborador` e armazena somente hash Argon2. Não aceita `role`, `email` ou `ativo` no payload. A resposta 201 contém somente id, colaborador_id, email, role e ativo. Duplicidade de vínculo/e-mail retorna 409, inclusive em conflito concorrente detectado pela constraint do banco. Não há endpoint público de criação de contas.
+
+O colaborador usa o mesmo `POST /auth/login` com e-mail e senha. Login e cada requisição autenticada verificam usuário ativo e vínculo com colaborador existente/ativo. Admin continua podendo autenticar sem vínculo.
+
+No Swagger, autorize primeiro o admin e execute o provisionamento. Depois faça login do colaborador, troque o token em Authorize e teste `/auth/me`, `/agendamentos/me` e o cadastro individual. Cole somente o token no campo HTTPBearer.
+
+### Migration Do Vínculo
+
+Em bancos existentes, execute manualmente `database/migrations/001_usuarios_colaborador_vinculo.sql` no SQL Editor do Supabase. O script exige vínculo para contas com role colaborador, mantendo admins sem vínculo permitidos. Se houver contas de colaboradores sem vínculo, a migration aborta sem corrigir ou apagar dados; revise essas contas manualmente e aplique novamente. A FK e as constraints únicas existentes permanecem.
+
+Em bancos novos, o `auth_schema.sql` atualizado já inclui essa constraint. Nenhum script é executado automaticamente pela API.
+
+## Disponibilidade Por Vagas
+
+Administradores cadastram lotes de vagas sem profissional usando capacidade e chave de idempotência em `POST /horarios`. Cada vaga tem ID próprio e pode ser reservada independentemente. Consulte [database/README_disponibilidade.md](database/README_disponibilidade.md) para contratos, compatibilidade e migration 003.
 
 A dependência antiga de `x-api-key` foi mantida temporariamente no código para compatibilidade, mas não é exigida junto com JWT nas rotas migradas.
 
@@ -336,6 +394,10 @@ Supabase → persiste dados
 ```
 
 O LangGraph não duplica a regra de negócio. O endpoint experimental chama o mesmo service usado pelo endpoint tradicional `POST /agendamentos`.
+
+O 201 tem contrato OpenAPI tipado: sucesso, mensagem, interpretacao nullable e
+agendamento completo, com profissional opcional. Erros do grafo preservam
+sucesso/mensagem/erro/sugestoes; 422 tambem documenta detail da validacao do FastAPI.
 
 Fluxo textual:
 

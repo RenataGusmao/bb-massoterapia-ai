@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.agents.llm import LLMConfigurationError, get_llm
+from app.core.datas import data_local
 from app.database.repositories.horarios import listar_horarios_disponiveis
 
 MAX_HORARIOS_NO_PROMPT = 40
@@ -11,11 +12,12 @@ MAX_HORARIOS_NO_PROMPT = 40
 SYSTEM_PROMPT = """Você é um assistente de agendamento de massoterapia corporativa.
 
 Receberá a mensagem de um colaborador e uma lista de horários disponíveis.
-Sua tarefa é escolher UM horário da lista que melhor atenda ao pedido.
+Sua tarefa é escolher UMA vaga da lista que melhor atenda ao pedido.
 
 Regras obrigatórias:
 - Escolha SOMENTE um horario_id que exista exatamente na lista fornecida.
 - Nunca invente ids, datas ou horários.
+- Não escolha profissionais; a vaga é identificada somente por horario_id.
 - Se a mensagem for vaga demais ou nenhum horário servir exatamente, devolva escolhido = false.
 - Nesse caso, tente sugerir até 3 horários da lista que sejam os mais próximos do pedido
   (mesmo dia da semana em outra data, mesmo período do dia, ou datas próximas). Cada sugestão
@@ -25,7 +27,7 @@ Regras obrigatórias:
 - "manhã" = antes de 12:00, "tarde" = entre 12:00 e 18:00, "noite" = após 18:00.
 
 Responda APENAS com um objeto JSON, sem markdown, sem crases, sem explicação fora dele:
-{"escolhido": true, "horario_id": "...", "massoterapeuta_id": "...", "justificativa": "..."}
+{"escolhido": true, "horario_id": "...", "justificativa": "..."}
 ou
 {"escolhido": false, "motivo": "...", "sugestoes": [{"horario_id": "...", "motivo": "..."}]}"""
 
@@ -48,7 +50,7 @@ def _formatar_horarios(horarios: list[dict]) -> str:
     linhas = []
     for horario in horarios[:MAX_HORARIOS_NO_PROMPT]:
         linhas.append(
-            f"- horario_id={horario['id']} | massoterapeuta_id={horario['massoterapeuta_id']} "
+            f"- horario_id={horario['id']} | vaga={horario.get('numero_vaga', 1)} "
             f"| data={horario['data']} | inicio={horario['hora_inicio']} | fim={horario['hora_fim']}"
         )
 
@@ -111,7 +113,9 @@ def _validar_sugestoes(sugestoes_brutas: list, horarios: list[dict]) -> list[dic
         sugestoes_validas.append(
             {
                 "horario_id": str(horario_real["id"]),
-                "massoterapeuta_id": str(horario_real["massoterapeuta_id"]),
+                "massoterapeuta_id": (
+                    str(horario_real["massoterapeuta_id"]) if horario_real.get("massoterapeuta_id") else None
+                ),
                 "data": str(horario_real["data"]),
                 "hora_inicio": str(horario_real["hora_inicio"]),
                 "hora_fim": str(horario_real["hora_fim"]),
@@ -123,7 +127,8 @@ def _validar_sugestoes(sugestoes_brutas: list, horarios: list[dict]) -> list[dic
 
 
 def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretacao:
-    horarios = listar_horarios_disponiveis()
+    data_referencia = hoje or data_local()
+    horarios = listar_horarios_disponiveis(data_referencia)
 
     if not horarios:
         return Interpretacao(escolhido=False, motivo="Não há horários disponíveis na agenda.")
@@ -133,10 +138,8 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
     except LLMConfigurationError as exc:
         raise InterpretacaoError(str(exc)) from exc
 
-    data_referencia = (hoje or date.today()).isoformat()
-
     user_prompt = (
-        f"Data de hoje: {data_referencia}\n\n"
+        f"Data de hoje: {data_referencia.isoformat()}\n\n"
         f"Horários disponíveis:\n{_formatar_horarios(horarios)}\n\n"
         f"Mensagem do colaborador: {mensagem}"
     )
@@ -175,6 +178,8 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
     return Interpretacao(
         escolhido=True,
         horario_id=str(horario_escolhido["id"]),
-        massoterapeuta_id=str(horario_escolhido["massoterapeuta_id"]),
+        massoterapeuta_id=(
+            str(horario_escolhido["massoterapeuta_id"]) if horario_escolhido.get("massoterapeuta_id") else None
+        ),
         justificativa=dados.get("justificativa"),
     )

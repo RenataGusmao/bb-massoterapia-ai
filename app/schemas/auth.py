@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 class UsuarioRole(StrEnum):
     COLABORADOR = "colaborador"
     ADMIN = "admin"
+    TERCEIRIZADA = "terceirizada"
 
 
 class LoginRequest(BaseModel):
@@ -16,13 +17,20 @@ class LoginRequest(BaseModel):
 
     @field_validator("email", mode="before")
     @classmethod
-    def normalizar_email(cls, valor: str) -> str:
-        return valor.strip().lower()
+    def normalizar_email(cls, valor: object) -> object:
+        return valor.strip().lower() if isinstance(valor, str) else valor
 
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class ColaboradorContaCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    colaborador_id: UUID
+    senha: str = Field(..., min_length=12, max_length=256)
 
 
 class UsuarioCreate(BaseModel):
@@ -34,8 +42,8 @@ class UsuarioCreate(BaseModel):
 
     @field_validator("email", mode="before")
     @classmethod
-    def normalizar_email(cls, valor: str) -> str:
-        return valor.strip().lower()
+    def normalizar_email(cls, valor: object) -> object:
+        return valor.strip().lower() if isinstance(valor, str) else valor
 
 
 class UsuarioAutenticado(BaseModel):

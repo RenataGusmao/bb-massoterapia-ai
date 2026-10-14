@@ -33,7 +33,11 @@ def usuario() -> dict:
 
 
 @pytest.fixture(autouse=True)
-def limpar_overrides():
+def limpar_overrides(monkeypatch):
+    monkeypatch.setattr(
+        security, "buscar_colaborador_por_id",
+        lambda colaborador_id: {"id": str(colaborador_id), "ativo": True},
+    )
     get_settings.cache_clear()
     app.dependency_overrides.clear()
     yield

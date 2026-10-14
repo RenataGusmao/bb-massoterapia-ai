@@ -1,10 +1,14 @@
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
-from app.core.security import get_current_user
+from app.core.security import autorizar_colaborador, get_current_user
+from app.schemas.auth import UsuarioAutenticado
 from app.graphs.agendamento.graph import agendamento_graph
 from app.graphs.agendamento.state import AgendamentoState
-from app.schemas.agendamento import AgendamentoGraphRequest
+from app.schemas.agendamento import (
+    AgendamentoGraphRequest, AgendamentoGraphResponse, AgendamentoGraphErrorResponse,
+    AgendamentoGraphValidationErrorResponse,
+)
 
 router = APIRouter(prefix="/graph", tags=["langgraph"])
 
@@ -17,16 +21,25 @@ AGENDAMENTO_GRAPH_RESPONSES = {
     502: {"description": "Falha na chamada ao modelo de linguagem."},
     503: {"description": "Falha de infraestrutura, banco ou IA não configurados."},
 }
+for codigo, contrato in AGENDAMENTO_GRAPH_RESPONSES.items():
+    if codigo != 201:
+        contrato["model"] = AgendamentoGraphErrorResponse
+AGENDAMENTO_GRAPH_RESPONSES[422]["model"] = (
+    AgendamentoGraphErrorResponse | AgendamentoGraphValidationErrorResponse
+)
 
 
 @router.post(
     "/agendamentos",
-    response_model=None,
+    response_model=AgendamentoGraphResponse,
     status_code=status.HTTP_201_CREATED,
     responses=AGENDAMENTO_GRAPH_RESPONSES,
-    dependencies=[Depends(get_current_user)],
 )
-def cadastrar_agendamento_com_grafo(requisicao: AgendamentoGraphRequest):
+def cadastrar_agendamento_com_grafo(
+    requisicao: AgendamentoGraphRequest,
+    usuario: UsuarioAutenticado = Depends(get_current_user),
+):
+    autorizar_colaborador(usuario, requisicao.colaborador_id)
     state_inicial: AgendamentoState = {
         "colaborador_id": str(requisicao.colaborador_id),
         "massoterapeuta_id": (

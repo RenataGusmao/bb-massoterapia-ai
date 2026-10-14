@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.core.security import require_admin
+from app.core.security import require_admin, require_agendamento_user
 from app.database.repositories.massoterapeutas import (
     buscar_massoterapeuta_por_id,
     criar_massoterapeuta,
@@ -14,7 +14,7 @@ from app.schemas.massoterapeuta import MassoterapeutaCreate, MassoterapeutaRespo
 router = APIRouter(prefix="/massoterapeutas", tags=["massoterapeutas"])
 
 
-@router.get("", response_model=list[MassoterapeutaResponse])
+@router.get("", response_model=list[MassoterapeutaResponse], dependencies=[Depends(require_agendamento_user)])
 def obter_massoterapeutas() -> list[dict]:
     try:
         return listar_massoterapeutas()
@@ -51,7 +51,7 @@ def cadastrar_massoterapeuta(massoterapeuta: MassoterapeutaCreate) -> dict:
         ) from exc
 
 
-@router.get("/{massoterapeuta_id}", response_model=MassoterapeutaResponse)
+@router.get("/{massoterapeuta_id}", response_model=MassoterapeutaResponse, dependencies=[Depends(require_agendamento_user)])
 def obter_massoterapeuta_por_id(massoterapeuta_id: UUID) -> dict:
     try:
         massoterapeuta = buscar_massoterapeuta_por_id(massoterapeuta_id)

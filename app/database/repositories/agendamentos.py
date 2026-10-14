@@ -1,7 +1,46 @@
 from uuid import UUID
 from datetime import date
 
+from postgrest.exceptions import APIError
+from pydantic import ValidationError
+
 from app.database.supabase import get_supabase_client
+from app.schemas.agendamento import AgendamentoRPCResponse
+
+
+class AgendamentoRPCError(ValueError):
+    def __init__(self, codigo: str, detalhe: str | None = None) -> None:
+        self.codigo = codigo
+        self.detalhe = detalhe
+        super().__init__(codigo)
+
+
+class AgendamentoRPCContractError(RuntimeError):
+    pass
+
+
+def _executar_rpc(nome: str, parametros: dict) -> dict:
+    try:
+        response = get_supabase_client().rpc(nome, parametros).execute()
+    except APIError as exc:
+        codigos = {
+            "23505": "horario_indisponivel",
+            "23P01": "intervalo_minimo",
+            "40001": "conflito_concorrente",
+            "40P01": "conflito_concorrente",
+            "55P03": "conflito_concorrente",
+        }
+        if exc.code in codigos:
+            raise AgendamentoRPCError(codigos[exc.code]) from exc
+        raise
+
+    try:
+        resultado = AgendamentoRPCResponse.model_validate(response.data)
+    except ValidationError as exc:
+        raise AgendamentoRPCContractError("Resposta inválida da RPC de agendamento.") from exc
+    if not resultado.sucesso:
+        raise AgendamentoRPCError(resultado.erro, resultado.detalhe)
+    return resultado.agendamento.model_dump(mode="json")
 
 
 def listar_agendamentos() -> list[dict]:
@@ -29,6 +68,19 @@ def buscar_agendamento_por_id(agendamento_id: UUID) -> dict | None:
 
     agendamentos = response.data or []
     return agendamentos[0] if agendamentos else None
+
+
+def listar_agendamentos_por_colaborador(colaborador_id: UUID) -> list[dict]:
+    response = (
+        get_supabase_client()
+        .table("agendamentos")
+        .select("*")
+        .eq("colaborador_id", str(colaborador_id))
+        .order("data_agendamento", desc=True)
+        .order("hora_inicio", desc=True)
+        .execute()
+    )
+    return response.data or []
 
 
 def buscar_ultimo_agendamento_valido(colaborador_id: UUID) -> dict | None:
@@ -67,20 +119,9 @@ def buscar_agendamentos_validos_no_intervalo(
     return response.data or []
 
 
-def criar_agendamento(payload: dict) -> dict:
-    response = (
-        get_supabase_client()
-        .table("agendamentos")
-        .insert(payload)
-        .execute()
-    )
-
-    return response.data[0]
-
-
 def criar_agendamento_transacional(
     colaborador_id: UUID,
-    massoterapeuta_id: UUID,
+    massoterapeuta_id: UUID | None,
     horario_id: UUID,
 ) -> dict:
     """Chama a funcao RPC do Postgres.
@@ -88,34 +129,22 @@ def criar_agendamento_transacional(
     Validacao, reserva do horario e insert acontecem em uma unica transacao,
     entao nao existe mais a janela em que o horario fica travado sem agendamento.
     """
-    response = (
-        get_supabase_client()
-        .rpc(
-            "criar_agendamento_transacional",
-            {
-                "p_colaborador_id": str(colaborador_id),
-                "p_massoterapeuta_id": str(massoterapeuta_id),
-                "p_horario_id": str(horario_id),
-            },
-        )
-        .execute()
+    return _executar_rpc(
+        "criar_agendamento_transacional",
+        {
+            "p_colaborador_id": str(colaborador_id),
+            "p_massoterapeuta_id": str(massoterapeuta_id) if massoterapeuta_id else None,
+            "p_horario_id": str(horario_id),
+        },
     )
-
-    return response.data or {}
 
 
 def atualizar_status_agendamento(agendamento_id: UUID, status: str) -> dict:
     """Muda o status e, no caso de CANCELADO, devolve o horario para a agenda."""
-    response = (
-        get_supabase_client()
-        .rpc(
-            "atualizar_status_agendamento",
-            {
-                "p_agendamento_id": str(agendamento_id),
-                "p_status": status,
-            },
-        )
-        .execute()
+    return _executar_rpc(
+        "atualizar_status_agendamento",
+        {
+            "p_agendamento_id": str(agendamento_id),
+            "p_status": status,
+        },
     )
-
-    return response.data or {}
