@@ -436,7 +436,6 @@ from app.graphs.agendamento.graph import agendamento_graph
 
 resultado = agendamento_graph.invoke({
     "colaborador_id": "uuid-do-colaborador",
-    "massoterapeuta_id": "uuid-do-massoterapeuta",
     "horario_id": "uuid-do-horario",
 })
 ```

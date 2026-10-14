@@ -225,7 +225,7 @@ def test_criacao_confere_proprietario(client, monkeypatch, role, dono, status, r
     })
     monkeypatch.setattr(graph_agendamentos.agendamento_graph, "invoke", invocar)
     response = client.post(rota, json={
-        "colaborador_id": str(dono), "massoterapeuta_id": str(OUTRO), "horario_id": str(USUARIO),
+        "colaborador_id": str(dono), "horario_id": str(USUARIO),
     })
     assert response.status_code == status
     alvo = executar if rota == "/agendamentos" else invocar

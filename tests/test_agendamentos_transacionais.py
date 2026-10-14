@@ -37,7 +37,7 @@ def registro(status="AGENDADO"):
 
 def payload():
     return AgendamentoCreate(
-        colaborador_id=COLABORADOR, massoterapeuta_id=OUTRO, horario_id=HORARIO
+        colaborador_id=COLABORADOR, horario_id=HORARIO
     )
 
 
@@ -71,11 +71,12 @@ def test_criacao_usa_somente_rpc_e_extrai_agendamento(monkeypatch):
     client = mock_rpc(monkeypatch, {"sucesso": True, "agendamento": registro()})
     resultado = service.criar_agendamento_para_horario(payload())
     assert resultado["id"] == str(AGENDAMENTO)
+    assert resultado["massoterapeuta_id"] == str(OUTRO)
     assert "sucesso" not in resultado
     client.table.assert_not_called()
     client.rpc.assert_called_once_with("criar_agendamento_transacional", {
         "p_colaborador_id": str(COLABORADOR),
-        "p_massoterapeuta_id": str(OUTRO),
+        "p_massoterapeuta_id": None,
         "p_horario_id": str(HORARIO),
     })
 

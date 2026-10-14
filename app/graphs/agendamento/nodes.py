@@ -210,7 +210,6 @@ def responder_erro(state: AgendamentoState) -> AgendamentoState:
 def _criar_schema(state: AgendamentoState) -> AgendamentoCreate:
     return AgendamentoCreate(
         colaborador_id=state["colaborador_id"],
-        massoterapeuta_id=state.get("massoterapeuta_id"),
         horario_id=state.get("horario_id"),
     )
 

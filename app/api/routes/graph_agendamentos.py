@@ -42,9 +42,6 @@ def cadastrar_agendamento_com_grafo(
     autorizar_colaborador(usuario, requisicao.colaborador_id)
     state_inicial: AgendamentoState = {
         "colaborador_id": str(requisicao.colaborador_id),
-        "massoterapeuta_id": (
-            str(requisicao.massoterapeuta_id) if requisicao.massoterapeuta_id else None
-        ),
         "horario_id": str(requisicao.horario_id) if requisicao.horario_id else None,
         "mensagem": requisicao.mensagem,
     }
