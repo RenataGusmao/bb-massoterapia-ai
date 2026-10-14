@@ -4,16 +4,14 @@ from uuid import UUID
 
 from app.database.repositories.colaboradores import buscar_colaborador_por_id
 from app.database.repositories.agendamentos import (
+    AgendamentoRPCError,
     atualizar_status_agendamento,
-    buscar_agendamento_por_id,
     buscar_agendamentos_validos_no_intervalo,
-    criar_agendamento,
+    criar_agendamento_transacional,
 )
 from app.database.repositories.massoterapeutas import buscar_massoterapeuta_por_id
 from app.database.repositories.horarios import (
-    atualizar_disponibilidade_horario,
     buscar_horario_por_id,
-    reservar_horario_disponivel,
 )
 from app.schemas.agendamento import AgendamentoCreate, AgendamentoStatus
 
@@ -26,42 +24,93 @@ class AgendamentoContexto:
     data_agendamento: date
 
 
-class ColaboradorNaoEncontradoError(ValueError):
-    pass
+class AgendamentoRegraError(ValueError):
+    status_http = 409
+    codigo = "conflito_agendamento"
 
 
-class MassoterapeutaNaoEncontradoError(ValueError):
-    pass
+class ColaboradorNaoEncontradoError(AgendamentoRegraError):
+    status_http = 404
+    codigo = "colaborador_nao_encontrado"
 
 
-class MassoterapeutaInativoError(ValueError):
-    pass
+class ColaboradorInativoError(AgendamentoRegraError):
+    codigo = "colaborador_inativo"
 
 
-class HorarioNaoEncontradoError(ValueError):
-    pass
+class MassoterapeutaNaoEncontradoError(AgendamentoRegraError):
+    status_http = 404
+    codigo = "massoterapeuta_nao_encontrado"
 
 
-class HorarioIndisponivelError(ValueError):
-    pass
+class MassoterapeutaInativoError(AgendamentoRegraError):
+    codigo = "massoterapeuta_inativo"
 
 
-class HorarioMassoterapeutaInvalidoError(ValueError):
-    pass
+class HorarioNaoEncontradoError(AgendamentoRegraError):
+    status_http = 404
+    codigo = "horario_nao_encontrado"
 
 
-class AgendamentoNaoEncontradoError(ValueError):
-    pass
+class HorarioIndisponivelError(AgendamentoRegraError):
+    codigo = "horario_indisponivel"
 
 
-class StatusInvalidoError(ValueError):
-    pass
+class HorarioPassadoError(AgendamentoRegraError):
+    codigo = "horario_passado"
 
 
-class IntervaloAgendamentoError(ValueError):
+class HorarioMassoterapeutaInvalidoError(AgendamentoRegraError):
+    status_http = 422
+    codigo = "horario_massoterapeuta_invalido"
+
+
+class AgendamentoNaoEncontradoError(AgendamentoRegraError):
+    status_http = 404
+    codigo = "agendamento_nao_encontrado"
+
+
+class StatusInvalidoError(AgendamentoRegraError):
+    status_http = 422
+    codigo = "status_invalido"
+
+
+class TransicaoStatusInvalidaError(AgendamentoRegraError):
+    codigo = "transicao_invalida"
+
+
+class AgendamentoConcorrenteError(AgendamentoRegraError):
+    codigo = "conflito_concorrente"
+
+
+class IntervaloAgendamentoError(AgendamentoRegraError):
+    codigo = "intervalo_minimo"
+
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(detail)
+
+
+def _traduzir_erro_rpc(erro: AgendamentoRPCError) -> AgendamentoRegraError:
+    erros = {
+        "colaborador_nao_encontrado": (ColaboradorNaoEncontradoError, "Colaborador não encontrado."),
+        "colaborador_inativo": (ColaboradorInativoError, "Colaborador está inativo."),
+        "massoterapeuta_nao_encontrado": (MassoterapeutaNaoEncontradoError, "Massoterapeuta não encontrado."),
+        "massoterapeuta_inativo": (MassoterapeutaInativoError, "Massoterapeuta está inativo."),
+        "horario_nao_encontrado": (HorarioNaoEncontradoError, "Horário não encontrado."),
+        "horario_indisponivel": (HorarioIndisponivelError, "Horário já está ocupado."),
+        "horario_passado": (HorarioPassadoError, "Horário já passou."),
+        "horario_massoterapeuta_invalido": (HorarioMassoterapeutaInvalidoError, "Horário não pertence ao massoterapeuta informado."),
+        "intervalo_minimo": (IntervaloAgendamentoError, "Já existe sessão válida em intervalo inferior a 15 dias."),
+        "agendamento_nao_encontrado": (AgendamentoNaoEncontradoError, "Agendamento não encontrado."),
+        "status_invalido": (StatusInvalidoError, "Status inválido."),
+        "transicao_invalida": (TransicaoStatusInvalidaError, "Transição de status não permitida."),
+        "conflito_concorrente": (AgendamentoConcorrenteError, "Conflito concorrente. Atualize a agenda e tente novamente."),
+    }
+    if erro.codigo not in erros:
+        raise RuntimeError("Código de erro inesperado da RPC.") from erro
+    classe, mensagem = erros[erro.codigo]
+    return classe(erro.detalhe or mensagem)
 
 
 def _parse_data_agendamento(data_agendamento: date | str) -> date:
@@ -111,13 +160,8 @@ def validar_entidades_agendamento(agendamento: AgendamentoCreate) -> Agendamento
     colaborador = buscar_colaborador_por_id(agendamento.colaborador_id)
     if colaborador is None:
         raise ColaboradorNaoEncontradoError("Colaborador não encontrado.")
-
-    massoterapeuta = buscar_massoterapeuta_por_id(agendamento.massoterapeuta_id)
-    if massoterapeuta is None:
-        raise MassoterapeutaNaoEncontradoError("Massoterapeuta não encontrado.")
-
-    if massoterapeuta.get("ativo") is False:
-        raise MassoterapeutaInativoError("Massoterapeuta inativo.")
+    if not colaborador.get("ativo", False):
+        raise ColaboradorInativoError("Colaborador está inativo.")
 
     horario = buscar_horario_por_id(agendamento.horario_id)
 
@@ -127,10 +171,23 @@ def validar_entidades_agendamento(agendamento: AgendamentoCreate) -> Agendamento
     if not horario.get("disponivel"):
         raise HorarioIndisponivelError("Horário indisponível.")
 
-    if str(horario.get("massoterapeuta_id")) != str(agendamento.massoterapeuta_id):
+    profissional_historico = horario.get("massoterapeuta_id")
+    if (
+        profissional_historico and agendamento.massoterapeuta_id
+        and str(profissional_historico) != str(agendamento.massoterapeuta_id)
+    ):
         raise HorarioMassoterapeutaInvalidoError(
             "Horário não pertence ao massoterapeuta informado."
         )
+
+    profissional_id = profissional_historico or agendamento.massoterapeuta_id
+    massoterapeuta = {}
+    if profissional_id:
+        massoterapeuta = buscar_massoterapeuta_por_id(UUID(str(profissional_id)))
+        if massoterapeuta is None:
+            raise MassoterapeutaNaoEncontradoError("Massoterapeuta não encontrado.")
+        if massoterapeuta.get("ativo") is False:
+            raise MassoterapeutaInativoError("Massoterapeuta inativo.")
 
     data_agendamento = _parse_data_agendamento(horario["data"])
 
@@ -151,36 +208,20 @@ def validar_intervalo_agendamento(
 
 def executar_criacao_agendamento(
     agendamento: AgendamentoCreate,
-    contexto: AgendamentoContexto,
+    contexto: AgendamentoContexto | None = None,
 ) -> dict:
-    horario_reservado = reservar_horario_disponivel(agendamento.horario_id)
-    if horario_reservado is None:
-        raise HorarioIndisponivelError("Horário indisponível.")
-
-    payload = {
-        "colaborador_id": str(agendamento.colaborador_id),
-        "massoterapeuta_id": str(agendamento.massoterapeuta_id),
-        "horario_id": str(agendamento.horario_id),
-        "data_agendamento": horario_reservado["data"],
-        "hora_inicio": horario_reservado["hora_inicio"],
-        "hora_fim": horario_reservado["hora_fim"],
-        "status": AgendamentoStatus.AGENDADO.value,
-    }
-
+    # The graph's context is advisory; the RPC revalidates under database locks.
     try:
-        return criar_agendamento(payload)
-    except Exception:
-        try:
-            atualizar_disponibilidade_horario(agendamento.horario_id, True)
-        except Exception:
-            pass
-        raise
+        return criar_agendamento_transacional(
+            agendamento.colaborador_id, agendamento.massoterapeuta_id, agendamento.horario_id
+        )
+
+    except AgendamentoRPCError as exc:
+        raise _traduzir_erro_rpc(exc) from exc
 
 
 def criar_agendamento_para_horario(agendamento: AgendamentoCreate) -> dict:
-    contexto = validar_entidades_agendamento(agendamento)
-    validar_intervalo_agendamento(agendamento, contexto)
-    return executar_criacao_agendamento(agendamento, contexto)
+    return executar_criacao_agendamento(agendamento)
 
 
 def alterar_status_agendamento(agendamento_id: UUID, novo_status: AgendamentoStatus) -> dict:
@@ -189,10 +230,6 @@ def alterar_status_agendamento(agendamento_id: UUID, novo_status: AgendamentoSta
     A validação definitiva e a liberação do horário (no caso de cancelamento)
     acontecem dentro da RPC do Postgres, de forma transacional.
     """
-    agendamento_existente = buscar_agendamento_por_id(agendamento_id)
-    if agendamento_existente is None:
-        raise AgendamentoNaoEncontradoError("Agendamento não encontrado.")
-
     status_valor = (
         novo_status.value if isinstance(novo_status, AgendamentoStatus) else str(novo_status)
     )
@@ -201,11 +238,7 @@ def alterar_status_agendamento(agendamento_id: UUID, novo_status: AgendamentoSta
     if status_valor not in valores_validos:
         raise StatusInvalidoError(f"Status inválido: {status_valor}.")
 
-    resultado = atualizar_status_agendamento(agendamento_id, status_valor)
-
-    if not resultado:
-        raise StatusInvalidoError(
-            "Não foi possível atualizar o status (transição inválida ou agendamento indisponível)."
-        )
-
-    return resultado
+    try:
+        return atualizar_status_agendamento(agendamento_id, status_valor)
+    except AgendamentoRPCError as exc:
+        raise _traduzir_erro_rpc(exc) from exc
