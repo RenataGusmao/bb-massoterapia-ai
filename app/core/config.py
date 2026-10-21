@@ -16,13 +16,12 @@ class SettingsError(RuntimeError):
 class Settings:
     supabase_url: str | None
     supabase_secret_key: str | None
-    google_api_key: str | None
+    business_timezone: str
+    session_ttl_minutes: int
+    gemini_api_key: str | None
     gemini_model: str
-    allowed_origins: tuple[str, ...]
-    api_key: str | None
-    jwt_secret_key: str | None
-    jwt_algorithm: str
-    jwt_access_token_expire_minutes: int
+    llm_confidence_threshold: float
+    gemini_timeout_seconds: int
 
     def require_supabase(self) -> tuple[str, str]:
         if not self.supabase_url or not self.supabase_secret_key:
@@ -81,15 +80,10 @@ def get_settings() -> Settings:
     return Settings(
         supabase_url=os.getenv("SUPABASE_URL"),
         supabase_secret_key=os.getenv("SUPABASE_SECRET_KEY"),
-        google_api_key=os.getenv("GOOGLE_API_KEY"),
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest"),
-        allowed_origins=_parse_origins(os.getenv("ALLOWED_ORIGINS")),
-        api_key=os.getenv("API_KEY") or None,
-        jwt_secret_key=os.getenv("JWT_SECRET_KEY") or None,
-        jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
-        jwt_access_token_expire_minutes=_parse_positive_int(
-            "JWT_ACCESS_TOKEN_EXPIRE_MINUTES",
-            os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES"),
-            60,
-        ),
+        business_timezone=os.getenv("BUSINESS_TIMEZONE", "America/Recife"),
+        session_ttl_minutes=int(os.getenv("SESSION_TTL_MINUTES", "30")),
+        gemini_api_key=os.getenv("GEMINI_API_KEY"),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
+        llm_confidence_threshold=float(os.getenv("LLM_CONFIDENCE_THRESHOLD", "0.60")),
+        gemini_timeout_seconds=int(os.getenv("GEMINI_TIMEOUT_SECONDS", "5")),
     )

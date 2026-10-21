@@ -2,8 +2,10 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.routes import (
     agendamentos,
-    agenda,
-    auth,
+    agents_bem_estar,
+    chat,
+    chat_agendamento,
+    chat_recepcao,
     colaboradores,
     graph_agendamentos,
     horarios,
@@ -19,6 +21,10 @@ api_router.include_router(massoterapeutas.router)
 api_router.include_router(horarios.router)
 api_router.include_router(agendamentos.router)
 api_router.include_router(graph_agendamentos.router)
+api_router.include_router(chat.router)
+api_router.include_router(chat_agendamento.router)
+api_router.include_router(chat_recepcao.router)
+api_router.include_router(agents_bem_estar.router)
 
 
 @api_router.get("/health/db", tags=["health"])
