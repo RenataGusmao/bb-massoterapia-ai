@@ -7,6 +7,7 @@ from app.database.supabase import SupabaseConfigurationError
 from app.graphs.agendamento.state import AgendamentoState
 from app.schemas.agendamento import AgendamentoCreate
 from app.services.agendamentos import (
+    AgendamentoRegraError,
     AgendamentoContexto,
     ColaboradorNaoEncontradoError,
     HorarioIndisponivelError,
@@ -39,7 +40,13 @@ def receber_solicitacao(state: AgendamentoState) -> AgendamentoState:
 
 
 def interpretar_solicitacao(state: AgendamentoState) -> AgendamentoState:
-    if state.get("horario_id") and state.get("massoterapeuta_id"):
+    """Node de IA.
+
+    So entra em acao quando o cliente NAO mandou os ids. Se eles ja vieram
+    prontos, o node apenas repassa o estado e nenhuma chamada ao modelo
+    acontece, o que economiza cota do free tier.
+    """
+    if state.get("horario_id"):
         return {
             **state,
             "mensagem_resposta": "Solicitação estruturada, interpretação dispensada.",
@@ -51,7 +58,7 @@ def interpretar_solicitacao(state: AgendamentoState) -> AgendamentoState:
         return _erro(
             state,
             422,
-            "Informe horario_id e massoterapeuta_id ou uma mensagem em texto.",
+            "Informe horario_id ou uma mensagem em texto.",
             "solicitacao_incompleta",
         )
 
@@ -111,6 +118,8 @@ def validar_entidades(state: AgendamentoState) -> AgendamentoState:
             "Horário não pertence ao massoterapeuta informado.",
             "horario_massoterapeuta_invalido",
         )
+    except AgendamentoRegraError as exc:
+        return _erro(state, exc.status_http, str(exc), exc.codigo)
     except SupabaseConfigurationError:
         return _erro(state, 503, "Banco de dados não configurado.", "banco_nao_configurado")
     except Exception:
@@ -159,6 +168,8 @@ def executar_agendamento(state: AgendamentoState) -> AgendamentoState:
         return _erro(state, 409, exc.detail, "intervalo_minimo")
     except HorarioIndisponivelError:
         return _erro(state, 409, "Horário já está ocupado.", "horario_indisponivel")
+    except AgendamentoRegraError as exc:
+        return _erro(state, exc.status_http, str(exc), exc.codigo)
     except SupabaseConfigurationError:
         return _erro(state, 503, "Banco de dados não configurado.", "banco_nao_configurado")
     except Exception:
@@ -197,7 +208,6 @@ def responder_erro(state: AgendamentoState) -> AgendamentoState:
 def _criar_schema(state: AgendamentoState) -> AgendamentoCreate:
     return AgendamentoCreate(
         colaborador_id=state["colaborador_id"],
-        massoterapeuta_id=state.get("massoterapeuta_id"),
         horario_id=state.get("horario_id"),
     )
 
@@ -224,4 +234,5 @@ def _erro(
         "mensagem_resposta": mensagem,
         "agendamento": None,
         "erro": erro,
+        "sugestoes": sugestoes,
     }

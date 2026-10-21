@@ -409,29 +409,6 @@ O 201 tem contrato OpenAPI tipado: sucesso, mensagem, interpretacao nullable e
 agendamento completo, com profissional opcional. Erros do grafo preservam
 sucesso/mensagem/erro/sugestoes; 422 tambem documenta detail da validacao do FastAPI.
 
-### Interpretação Por IA
-
-Quando a requisição traz somente `mensagem`, o interpretador (`app/agents/interpretador.py`) envia ao Gemini a data de hoje, a lista de horários livres e o pedido do colaborador. O modelo devolve um JSON; o `horario_id` escolhido é sempre revalidado contra a lista real antes de seguir para o fluxo, e sugestões com ids inexistentes são descartadas.
-
-Comportamento atual:
-
-- A data de hoje e cada horário enviados ao modelo trazem o dia da semana em português, por exemplo `2026-10-15 (quinta-feira)`, para que pedidos como "quinta de manhã" não dependam de cálculo de calendário pelo modelo.
-- Vagas de um mesmo lote (mesma data, início, fim e profissional) são agrupadas em uma única linha com `vagas_livres`. Antes, lotes com capacidade alta ocupavam as 40 linhas do prompt e escondiam os dias seguintes.
-- A extração do JSON aceita texto ou cercas de markdown ao redor da resposta e escolhe o primeiro objeto válido; respostas que não sejam um objeto JSON são rejeitadas.
-- `escolhido` também é aceito como a string `"true"`; `sugestoes: null` é tratado como lista vazia.
-- A chamada ao Gemini tem timeout de 30 segundos e até 2 tentativas.
-
-Erros do passo de IA:
-
-| Situação | HTTP | `erro` |
-| --- | --- | --- |
-| Sem `horario_id` e sem `mensagem` | 422 | `solicitacao_incompleta` |
-| Pedido vago ou sem vaga adequada (com `sugestoes` quando houver) | 422 | `interpretacao_inconclusiva` |
-| `GOOGLE_API_KEY` ausente ou dependência não instalada | 503 | `interpretador_indisponivel` |
-| Resposta do modelo que não é JSON válido | 502 | `erro_llm` |
-| Falha de rede, cota ou erro do provedor | 502 | `erro_llm` |
-| Banco não configurado | 503 | `banco_nao_configurado` |
-
 Fluxo textual:
 
 ```text

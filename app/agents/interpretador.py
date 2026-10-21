@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.agents.llm import LLMConfigurationError, get_llm
+from app.core.datas import data_local
 from app.database.repositories.horarios import listar_horarios_disponiveis
 
 MAX_HORARIOS_NO_PROMPT = 40
@@ -11,17 +12,22 @@ MAX_HORARIOS_NO_PROMPT = 40
 SYSTEM_PROMPT = """Você é um assistente de agendamento de massoterapia corporativa.
 
 Receberá a mensagem de um colaborador e uma lista de horários disponíveis.
-Sua tarefa é escolher UM horário da lista que melhor atenda ao pedido.
+Sua tarefa é escolher UMA vaga da lista que melhor atenda ao pedido.
 
 Regras obrigatórias:
 - Escolha SOMENTE um horario_id que exista exatamente na lista fornecida.
 - Nunca invente ids, datas ou horários.
-- Se a mensagem for vaga demais ou nenhum horário servir, devolva escolhido = false.
+- Não escolha profissionais; a vaga é identificada somente por horario_id.
+- Se a mensagem for vaga demais ou nenhum horário servir exatamente, devolva escolhido = false.
+- Nesse caso, tente sugerir até 3 horários da lista que sejam os mais próximos do pedido
+  (mesmo dia da semana em outra data, mesmo período do dia, ou datas próximas). Cada sugestão
+  deve usar um horario_id que exista de verdade na lista. Se não houver nada minimamente
+  parecido, devolva sugestoes como uma lista vazia.
 - Considere referências relativas de data usando a data de hoje informada.
 - "manhã" = antes de 12:00, "tarde" = entre 12:00 e 18:00, "noite" = após 18:00.
 
 Responda APENAS com um objeto JSON, sem markdown, sem crases, sem explicação fora dele:
-{"escolhido": true, "horario_id": "...", "massoterapeuta_id": "...", "justificativa": "..."}
+{"escolhido": true, "horario_id": "...", "justificativa": "..."}
 ou
 {"escolhido": false, "motivo": "..."}"""
 
@@ -43,7 +49,7 @@ def _formatar_horarios(horarios: list[dict]) -> str:
     linhas = []
     for horario in horarios[:MAX_HORARIOS_NO_PROMPT]:
         linhas.append(
-            f"- horario_id={horario['id']} | massoterapeuta_id={horario['massoterapeuta_id']} "
+            f"- horario_id={horario['id']} | vaga={horario.get('numero_vaga', 1)} "
             f"| data={horario['data']} | inicio={horario['hora_inicio']} | fim={horario['hora_fim']}"
         )
 
@@ -68,8 +74,42 @@ def _extrair_json(texto: str) -> dict:
             raise InterpretacaoError("Resposta do modelo não é um JSON válido.") from exc
 
 
+def _validar_sugestoes(sugestoes_brutas: list, horarios: list[dict]) -> list[dict]:
+    if not sugestoes_brutas:
+        return []
+
+    horarios_por_id = {str(horario["id"]): horario for horario in horarios}
+    sugestoes_validas = []
+
+    for sugestao in sugestoes_brutas[:3]:
+        if not isinstance(sugestao, dict):
+            continue
+
+        horario_id = str(sugestao.get("horario_id", ""))
+        horario_real = horarios_por_id.get(horario_id)
+
+        if horario_real is None:
+            continue
+
+        sugestoes_validas.append(
+            {
+                "horario_id": str(horario_real["id"]),
+                "massoterapeuta_id": (
+                    str(horario_real["massoterapeuta_id"]) if horario_real.get("massoterapeuta_id") else None
+                ),
+                "data": str(horario_real["data"]),
+                "hora_inicio": str(horario_real["hora_inicio"]),
+                "hora_fim": str(horario_real["hora_fim"]),
+                "motivo": sugestao.get("motivo"),
+            }
+        )
+
+    return sugestoes_validas
+
+
 def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretacao:
-    horarios = listar_horarios_disponiveis()
+    data_referencia = hoje or data_local()
+    horarios = listar_horarios_disponiveis(data_referencia)
 
     if not horarios:
         return Interpretacao(escolhido=False, motivo="Não há horários disponíveis na agenda.")
@@ -79,10 +119,8 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
     except LLMConfigurationError as exc:
         raise InterpretacaoError(str(exc)) from exc
 
-    data_referencia = (hoje or date.today()).isoformat()
-
     user_prompt = (
-        f"Data de hoje: {data_referencia}\n\n"
+        f"Data de hoje: {data_referencia.isoformat()}\n\n"
         f"Horários disponíveis:\n{_formatar_horarios(horarios)}\n\n"
         f"Mensagem do colaborador: {mensagem}"
     )
@@ -118,6 +156,8 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
     return Interpretacao(
         escolhido=True,
         horario_id=str(horario_escolhido["id"]),
-        massoterapeuta_id=str(horario_escolhido["massoterapeuta_id"]),
+        massoterapeuta_id=(
+            str(horario_escolhido["massoterapeuta_id"]) if horario_escolhido.get("massoterapeuta_id") else None
+        ),
         justificativa=dados.get("justificativa"),
     )
