@@ -18,7 +18,6 @@ from app.graphs.agendamento.nodes import (
 from app.graphs.agendamento.state import AgendamentoState
 
 
-
 graph_builder = StateGraph(AgendamentoState)
 graph_builder.add_node("receber_solicitacao", receber_solicitacao)
 graph_builder.add_node("interpretar_solicitacao", interpretar_solicitacao)
@@ -28,10 +27,8 @@ graph_builder.add_node("executar_agendamento", executar_agendamento)
 graph_builder.add_node("responder_sucesso", responder_sucesso)
 graph_builder.add_node("responder_erro", responder_erro)
 
-
 graph_builder.add_edge(START, "receber_solicitacao")
 graph_builder.add_edge("receber_solicitacao", "interpretar_solicitacao")
-
 
 graph_builder.add_conditional_edges(
     "interpretar_solicitacao",
@@ -67,6 +64,5 @@ graph_builder.add_conditional_edges(
 )
 graph_builder.add_edge("responder_sucesso", END)
 graph_builder.add_edge("responder_erro", END)
-
 
 agendamento_graph = graph_builder.compile()

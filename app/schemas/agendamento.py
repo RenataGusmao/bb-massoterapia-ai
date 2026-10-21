@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class AgendamentoStatus(StrEnum):
@@ -14,12 +14,8 @@ class AgendamentoStatus(StrEnum):
 
 
 class AgendamentoCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{
-        "colaborador_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        "horario_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    }]})
-
     colaborador_id: UUID
+    massoterapeuta_id: UUID
     horario_id: UUID
 
 
@@ -28,20 +24,8 @@ class AgendamentoStatusUpdate(BaseModel):
 
 
 class AgendamentoGraphRequest(BaseModel):
-    """Aceita os dois caminhos do grafo.
-
-    Estruturado: colaborador_id + horario_id (vaga).
-    Com IA:      colaborador_id + mensagem em texto livre.
-    """
-
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [
-        {"colaborador_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-         "horario_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
-        {"colaborador_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-         "mensagem": "Quero massagem quinta de manha."},
-    ]})
-
     colaborador_id: UUID
+    massoterapeuta_id: UUID | None = None
     horario_id: UUID | None = None
     mensagem: str | None = Field(
         default=None,
@@ -51,15 +35,22 @@ class AgendamentoGraphRequest(BaseModel):
 
     @model_validator(mode="after")
     def validar_caminho(self) -> "AgendamentoGraphRequest":
-        estruturado = self.horario_id is not None
+        estruturado = self.massoterapeuta_id is not None and self.horario_id is not None
         texto = bool(self.mensagem and self.mensagem.strip())
 
         if not estruturado and not texto:
             raise ValueError(
-                "Envie horario_id, ou uma mensagem em texto livre."
+                "Envie massoterapeuta_id + horario_id, ou uma mensagem em texto livre."
             )
 
         return self
+
+
+class AgendamentoGraphResponse(BaseModel):
+    sucesso: bool
+    mensagem: str
+    interpretacao: str | None = None
+    agendamento: dict[str, Any] | None = None
 
 
 class AgendamentoResponse(BaseModel):
@@ -67,7 +58,7 @@ class AgendamentoResponse(BaseModel):
 
     id: UUID
     colaborador_id: UUID
-    massoterapeuta_id: UUID | None = None
+    massoterapeuta_id: UUID
     horario_id: UUID
     data_agendamento: date
     hora_inicio: time
@@ -75,36 +66,3 @@ class AgendamentoResponse(BaseModel):
     status: AgendamentoStatus
     criado_em: datetime
     atualizado_em: datetime
-
-
-class AgendamentoGraphResponse(BaseModel):
-    sucesso: bool
-    mensagem: str
-    interpretacao: str | None
-    agendamento: AgendamentoResponse
-
-
-class AgendamentoGraphErrorResponse(BaseModel):
-    sucesso: bool
-    mensagem: str
-    erro: str | None
-    sugestoes: list[dict[str, Any]] | None = None
-
-
-class AgendamentoGraphValidationErrorResponse(BaseModel):
-    detail: list[dict[str, Any]]
-
-
-class AgendamentoRPCResponse(BaseModel):
-    sucesso: StrictBool
-    agendamento: AgendamentoResponse | None = None
-    erro: str | None = None
-    detalhe: str | None = None
-
-    @model_validator(mode="after")
-    def validar_resultado(self) -> "AgendamentoRPCResponse":
-        if self.sucesso and self.agendamento is None:
-            raise ValueError("RPC não retornou o agendamento.")
-        if not self.sucesso and not self.erro:
-            raise ValueError("RPC não retornou o código do erro.")
-        return self

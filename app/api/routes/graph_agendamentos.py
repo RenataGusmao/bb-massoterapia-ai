@@ -1,14 +1,10 @@
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
-from app.core.security import autorizar_colaborador, get_current_user
-from app.schemas.auth import UsuarioAutenticado
+from app.core.security import verificar_api_key
 from app.graphs.agendamento.graph import agendamento_graph
 from app.graphs.agendamento.state import AgendamentoState
-from app.schemas.agendamento import (
-    AgendamentoGraphRequest, AgendamentoGraphResponse, AgendamentoGraphErrorResponse,
-    AgendamentoGraphValidationErrorResponse,
-)
+from app.schemas.agendamento import AgendamentoGraphRequest
 
 router = APIRouter(prefix="/graph", tags=["langgraph"])
 
@@ -21,27 +17,21 @@ AGENDAMENTO_GRAPH_RESPONSES = {
     502: {"description": "Falha na chamada ao modelo de linguagem."},
     503: {"description": "Falha de infraestrutura, banco ou IA não configurados."},
 }
-for codigo, contrato in AGENDAMENTO_GRAPH_RESPONSES.items():
-    if codigo != 201:
-        contrato["model"] = AgendamentoGraphErrorResponse
-AGENDAMENTO_GRAPH_RESPONSES[422]["model"] = (
-    AgendamentoGraphErrorResponse | AgendamentoGraphValidationErrorResponse
-)
 
 
 @router.post(
     "/agendamentos",
-    response_model=AgendamentoGraphResponse,
+    response_model=None,
     status_code=status.HTTP_201_CREATED,
     responses=AGENDAMENTO_GRAPH_RESPONSES,
+    dependencies=[Depends(verificar_api_key)],
 )
-def cadastrar_agendamento_com_grafo(
-    requisicao: AgendamentoGraphRequest,
-    usuario: UsuarioAutenticado = Depends(get_current_user),
-):
-    autorizar_colaborador(usuario, requisicao.colaborador_id)
+def cadastrar_agendamento_com_grafo(requisicao: AgendamentoGraphRequest):
     state_inicial: AgendamentoState = {
         "colaborador_id": str(requisicao.colaborador_id),
+        "massoterapeuta_id": (
+            str(requisicao.massoterapeuta_id) if requisicao.massoterapeuta_id else None
+        ),
         "horario_id": str(requisicao.horario_id) if requisicao.horario_id else None,
         "mensagem": requisicao.mensagem,
     }
@@ -56,19 +46,13 @@ def cadastrar_agendamento_com_grafo(
             "agendamento": resultado["agendamento"],
         }
 
-    conteudo = {
-        "sucesso": False,
-        "mensagem": resultado.get(
-            "mensagem_resposta", "Não foi possível realizar o agendamento."
-        ),
-        "erro": resultado.get("erro"),
-    }
-
-    sugestoes = resultado.get("sugestoes")
-    if sugestoes:
-        conteudo["sugestoes"] = sugestoes
-
     return JSONResponse(
         status_code=resultado.get("status_http", status.HTTP_500_INTERNAL_SERVER_ERROR),
-        content=conteudo,
+        content={
+            "sucesso": False,
+            "mensagem": resultado.get(
+                "mensagem_resposta", "Não foi possível realizar o agendamento."
+            ),
+            "erro": resultado.get("erro"),
+        },
     )

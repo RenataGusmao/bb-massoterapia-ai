@@ -1,9 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-
-from app.core.security import autorizar_colaborador, get_current_user, require_admin
-from app.schemas.auth import UsuarioAutenticado
+from fastapi import APIRouter, HTTPException, status
 
 from app.database.repositories.colaboradores import (
     buscar_colaborador_por_id,
@@ -16,9 +13,7 @@ from app.schemas.colaborador import ColaboradorCreate, ColaboradorResponse
 router = APIRouter(prefix="/colaboradores", tags=["colaboradores"])
 
 
-@router.get(
-    "", response_model=list[ColaboradorResponse], dependencies=[Depends(require_admin)]
-)
+@router.get("", response_model=list[ColaboradorResponse])
 def obter_colaboradores() -> list[dict]:
     try:
         return listar_colaboradores()
@@ -34,12 +29,7 @@ def obter_colaboradores() -> list[dict]:
         ) from exc
 
 
-@router.post(
-    "",
-    response_model=ColaboradorResponse,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
-)
+@router.post("", response_model=ColaboradorResponse, status_code=status.HTTP_201_CREATED)
 def cadastrar_colaborador(colaborador: ColaboradorCreate) -> dict:
     try:
         return criar_colaborador(colaborador)
@@ -56,11 +46,7 @@ def cadastrar_colaborador(colaborador: ColaboradorCreate) -> dict:
 
 
 @router.get("/{colaborador_id}", response_model=ColaboradorResponse)
-def obter_colaborador_por_id(
-    colaborador_id: UUID,
-    usuario: UsuarioAutenticado = Depends(get_current_user),
-) -> dict:
-    autorizar_colaborador(usuario, colaborador_id)
+def obter_colaborador_por_id(colaborador_id: UUID) -> dict:
     try:
         colaborador = buscar_colaborador_por_id(colaborador_id)
     except SupabaseConfigurationError as exc:

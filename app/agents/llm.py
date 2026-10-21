@@ -29,5 +29,4 @@ def get_llm():
         google_api_key=api_key,
         temperature=0,
         max_retries=2,
-        timeout=30,
     )
