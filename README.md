@@ -294,6 +294,16 @@ Cadastre também `GOOGLE_API_KEY` para usar a interpretação de linguagem natur
 
 Depois de salvar as variáveis, faça um novo deploy pelo Render quando quiser ativar a conexão no ambiente publicado.
 
+## Testes Automatizados
+
+Com as dependências instaladas:
+
+```bash
+pytest
+```
+
+Os testes `test_postgres_*` são ignorados quando não há PostgreSQL isolado configurado (dependências em `requirements-postgres-test.txt`); os demais usam mocks e não acessam Supabase nem Gemini. O comportamento do interpretador com o modelo real só pode ser confirmado com `GOOGLE_API_KEY` válida, enviando `POST /graph/agendamentos` com `colaborador_id` e `mensagem`.
+
 ## Como Testar A API
 
 Endpoint raiz:
@@ -398,6 +408,29 @@ O LangGraph não duplica a regra de negócio. O endpoint experimental chama o me
 O 201 tem contrato OpenAPI tipado: sucesso, mensagem, interpretacao nullable e
 agendamento completo, com profissional opcional. Erros do grafo preservam
 sucesso/mensagem/erro/sugestoes; 422 tambem documenta detail da validacao do FastAPI.
+
+### Interpretação Por IA
+
+Quando a requisição traz somente `mensagem`, o interpretador (`app/agents/interpretador.py`) envia ao Gemini a data de hoje, a lista de horários livres e o pedido do colaborador. O modelo devolve um JSON; o `horario_id` escolhido é sempre revalidado contra a lista real antes de seguir para o fluxo, e sugestões com ids inexistentes são descartadas.
+
+Comportamento atual:
+
+- A data de hoje e cada horário enviados ao modelo trazem o dia da semana em português, por exemplo `2026-10-15 (quinta-feira)`, para que pedidos como "quinta de manhã" não dependam de cálculo de calendário pelo modelo.
+- Vagas de um mesmo lote (mesma data, início, fim e profissional) são agrupadas em uma única linha com `vagas_livres`. Antes, lotes com capacidade alta ocupavam as 40 linhas do prompt e escondiam os dias seguintes.
+- A extração do JSON aceita texto ou cercas de markdown ao redor da resposta e escolhe o primeiro objeto válido; respostas que não sejam um objeto JSON são rejeitadas.
+- `escolhido` também é aceito como a string `"true"`; `sugestoes: null` é tratado como lista vazia.
+- A chamada ao Gemini tem timeout de 30 segundos e até 2 tentativas.
+
+Erros do passo de IA:
+
+| Situação | HTTP | `erro` |
+| --- | --- | --- |
+| Sem `horario_id` e sem `mensagem` | 422 | `solicitacao_incompleta` |
+| Pedido vago ou sem vaga adequada (com `sugestoes` quando houver) | 422 | `interpretacao_inconclusiva` |
+| `GOOGLE_API_KEY` ausente ou dependência não instalada | 503 | `interpretador_indisponivel` |
+| Resposta do modelo que não é JSON válido | 502 | `erro_llm` |
+| Falha de rede, cota ou erro do provedor | 502 | `erro_llm` |
+| Banco não configurado | 503 | `banco_nao_configurado` |
 
 Fluxo textual:
 

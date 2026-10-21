@@ -2,7 +2,11 @@ from datetime import date
 
 from pydantic import ValidationError
 
-from app.agents.interpretador import InterpretacaoError, interpretar_mensagem
+from app.agents.interpretador import (
+    InterpretacaoError,
+    InterpretacaoRespostaInvalidaError,
+    interpretar_mensagem,
+)
 from app.database.supabase import SupabaseConfigurationError
 from app.graphs.agendamento.state import AgendamentoState
 from app.schemas.agendamento import AgendamentoCreate
@@ -65,6 +69,8 @@ def interpretar_solicitacao(state: AgendamentoState) -> AgendamentoState:
 
     try:
         interpretacao = interpretar_mensagem(mensagem)
+    except InterpretacaoRespostaInvalidaError:
+        return _erro(state, 502, "Resposta inválida do modelo de linguagem.", "erro_llm")
     except InterpretacaoError as exc:
         return _erro(state, 503, str(exc), "interpretador_indisponivel")
     except SupabaseConfigurationError:
