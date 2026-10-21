@@ -2,10 +2,7 @@ from app.graphs.agendamento.state import AgendamentoState
 
 
 def decidir_apos_interpretacao(state: AgendamentoState) -> str:
-    if state.get("erro"):
-        return "erro"
-
-    if state.get("horario_id") and state.get("massoterapeuta_id"):
+    if state.get("erro") is None:
         return "continuar"
 
     return "erro"

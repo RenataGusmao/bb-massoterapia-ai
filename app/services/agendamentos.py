@@ -15,8 +15,6 @@ from app.database.repositories.horarios import (
 )
 from app.schemas.agendamento import AgendamentoCreate, AgendamentoStatus
 
-INTERVALO_MINIMO_DIAS = 15
-
 
 @dataclass(frozen=True)
 class AgendamentoContexto:
@@ -122,27 +120,13 @@ def _parse_data_agendamento(data_agendamento: date | str) -> date:
     return date.fromisoformat(data_agendamento)
 
 
-def _levantar_erro_rpc(resultado: dict) -> None:
-    erro = resultado.get("erro")
-
-    if erro == "intervalo_minimo":
-        raise IntervaloAgendamentoError(
-            resultado.get("detalhe") or "Intervalo mínimo entre sessões não respeitado."
-        )
-
-    excecao = ERROS_RPC.get(erro or "")
-    if excecao is not None:
-        raise excecao(erro)
-
-    raise RuntimeError(f"Falha não mapeada na RPC: {erro!r}")
-
-
 def _validar_intervalo_minimo(colaborador_id: UUID, nova_data: date) -> None:
-    janela = INTERVALO_MINIMO_DIAS - 1
+    data_inicio = nova_data - timedelta(days=14)
+    data_fim = nova_data + timedelta(days=14)
     conflitos = buscar_agendamentos_validos_no_intervalo(
         colaborador_id=colaborador_id,
-        data_inicio=nova_data - timedelta(days=janela),
-        data_fim=nova_data + timedelta(days=janela),
+        data_inicio=data_inicio,
+        data_fim=data_fim,
     )
 
     if not conflitos:
@@ -151,21 +135,20 @@ def _validar_intervalo_minimo(colaborador_id: UUID, nova_data: date) -> None:
     datas_conflitantes = [
         _parse_data_agendamento(conflito["data_agendamento"]) for conflito in conflitos
     ]
-
     conflito_anterior = max(
         (data_conflito for data_conflito in datas_conflitantes if data_conflito <= nova_data),
         default=None,
     )
 
     if conflito_anterior is not None:
-        proxima_data_permitida = conflito_anterior + timedelta(days=INTERVALO_MINIMO_DIAS)
+        proxima_data_permitida = conflito_anterior + timedelta(days=15)
         raise IntervaloAgendamentoError(
             f"Novo agendamento permitido somente a partir de {proxima_data_permitida.isoformat()}."
         )
 
     conflito_futuro = min(datas_conflitantes)
-    data_limite_anterior = conflito_futuro - timedelta(days=INTERVALO_MINIMO_DIAS)
-    proxima_data_permitida = conflito_futuro + timedelta(days=INTERVALO_MINIMO_DIAS)
+    data_limite_anterior = conflito_futuro - timedelta(days=15)
+    proxima_data_permitida = conflito_futuro + timedelta(days=15)
     raise IntervaloAgendamentoError(
         "Já existe sessão válida em intervalo inferior a 15 dias. "
         f"Escolha uma data até {data_limite_anterior.isoformat()} "
@@ -242,8 +225,9 @@ def alterar_status_agendamento(agendamento_id: UUID, novo_status: AgendamentoSta
         novo_status.value if isinstance(novo_status, AgendamentoStatus) else str(novo_status)
     )
 
-    if resultado.get("sucesso") is not True:
-        _levantar_erro_rpc(resultado)
+    valores_validos = {item.value for item in AgendamentoStatus}
+    if status_valor not in valores_validos:
+        raise StatusInvalidoError(f"Status inválido: {status_valor}.")
 
     try:
         return atualizar_status_agendamento(agendamento_id, status_valor)

@@ -135,6 +135,10 @@ def cadastrar_agendamento(
     },
 )
 def alterar_status(agendamento_id: UUID, payload: AgendamentoStatusUpdate) -> dict:
+    """Cancela, conclui ou marca falta.
+
+    Cancelamento devolve o horário para a agenda dentro da mesma transação.
+    """
     try:
         return alterar_status_agendamento(agendamento_id, payload.status)
     except AgendamentoNaoEncontradoError as exc:

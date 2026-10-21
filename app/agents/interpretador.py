@@ -9,6 +9,16 @@ from app.database.repositories.horarios import listar_horarios_disponiveis
 
 MAX_HORARIOS_NO_PROMPT = 40
 
+DIAS_SEMANA = (
+    "segunda-feira",
+    "terça-feira",
+    "quarta-feira",
+    "quinta-feira",
+    "sexta-feira",
+    "sábado",
+    "domingo",
+)
+
 SYSTEM_PROMPT = """Você é um assistente de agendamento de massoterapia corporativa.
 
 Receberá a mensagem de um colaborador e uma lista de horários disponíveis.
@@ -24,15 +34,20 @@ Regras obrigatórias:
   deve usar um horario_id que exista de verdade na lista. Se não houver nada minimamente
   parecido, devolva sugestoes como uma lista vazia.
 - Considere referências relativas de data usando a data de hoje informada.
+- Use o dia da semana indicado entre parênteses em cada horário; não calcule o dia da semana por conta própria.
 - "manhã" = antes de 12:00, "tarde" = entre 12:00 e 18:00, "noite" = após 18:00.
 
 Responda APENAS com um objeto JSON, sem markdown, sem crases, sem explicação fora dele:
 {"escolhido": true, "horario_id": "...", "justificativa": "..."}
 ou
-{"escolhido": false, "motivo": "..."}"""
+{"escolhido": false, "motivo": "...", "sugestoes": [{"horario_id": "...", "motivo": "..."}]}"""
 
 
 class InterpretacaoError(RuntimeError):
+    pass
+
+
+class InterpretacaoRespostaInvalidaError(InterpretacaoError):
     pass
 
 
@@ -43,17 +58,57 @@ class Interpretacao:
     massoterapeuta_id: str | None = None
     justificativa: str | None = None
     motivo: str | None = None
+    sugestoes: list[dict] | None = None
+
+
+def _dia_semana(valor) -> str:
+    try:
+        return DIAS_SEMANA[date.fromisoformat(str(valor)[:10]).weekday()]
+    except ValueError:
+        return "desconhecido"
+
+
+def _agrupar_horarios(horarios: list[dict]) -> list[tuple[dict, int]]:
+    grupos: dict[tuple, list[dict]] = {}
+    for horario in horarios:
+        chave = (
+            str(horario["data"]),
+            str(horario["hora_inicio"]),
+            str(horario["hora_fim"]),
+            str(horario.get("massoterapeuta_id") or ""),
+        )
+        grupos.setdefault(chave, []).append(horario)
+
+    return [(vagas[0], len(vagas)) for vagas in grupos.values()]
 
 
 def _formatar_horarios(horarios: list[dict]) -> str:
     linhas = []
-    for horario in horarios[:MAX_HORARIOS_NO_PROMPT]:
+    for horario, vagas_livres in _agrupar_horarios(horarios)[:MAX_HORARIOS_NO_PROMPT]:
         linhas.append(
-            f"- horario_id={horario['id']} | vaga={horario.get('numero_vaga', 1)} "
-            f"| data={horario['data']} | inicio={horario['hora_inicio']} | fim={horario['hora_fim']}"
+            f"- horario_id={horario['id']} | data={horario['data']} ({_dia_semana(horario['data'])}) "
+            f"| inicio={horario['hora_inicio']} | fim={horario['hora_fim']} | vagas_livres={vagas_livres}"
         )
 
     return "\n".join(linhas)
+
+
+def _obter_texto_resposta(conteudo) -> str:
+    if isinstance(conteudo, str):
+        return conteudo
+
+    if isinstance(conteudo, list):
+        partes = []
+        for bloco in conteudo:
+            if isinstance(bloco, str):
+                partes.append(bloco)
+            elif isinstance(bloco, dict):
+                texto = bloco.get("text")
+                if texto:
+                    partes.append(str(texto))
+        return "\n".join(partes)
+
+    return str(conteudo)
 
 
 def _extrair_json(texto: str) -> dict:
@@ -61,21 +116,28 @@ def _extrair_json(texto: str) -> dict:
     limpo = re.sub(r"^```(?:json)?", "", limpo).strip()
     limpo = re.sub(r"```$", "", limpo).strip()
 
+    dados = None
     try:
-        return json.loads(limpo)
+        dados = json.loads(limpo)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", limpo, re.DOTALL)
-        if match is None:
-            raise InterpretacaoError("Resposta do modelo não é um JSON válido.")
+        decodificador = json.JSONDecoder()
+        for inicio in re.finditer(r"\{", limpo):
+            try:
+                candidato, _ = decodificador.raw_decode(limpo[inicio.start():])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidato, dict):
+                dados = candidato
+                break
 
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError as exc:
-            raise InterpretacaoError("Resposta do modelo não é um JSON válido.") from exc
+    if not isinstance(dados, dict):
+        raise InterpretacaoRespostaInvalidaError("Resposta do modelo não é um JSON válido.")
+
+    return dados
 
 
 def _validar_sugestoes(sugestoes_brutas: list, horarios: list[dict]) -> list[dict]:
-    if not sugestoes_brutas:
+    if not sugestoes_brutas or not isinstance(sugestoes_brutas, list):
         return []
 
     horarios_por_id = {str(horario["id"]): horario for horario in horarios}
@@ -120,7 +182,7 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
         raise InterpretacaoError(str(exc)) from exc
 
     user_prompt = (
-        f"Data de hoje: {data_referencia.isoformat()}\n\n"
+        f"Data de hoje: {data_referencia.isoformat()} ({_dia_semana(data_referencia.isoformat())})\n\n"
         f"Horários disponíveis:\n{_formatar_horarios(horarios)}\n\n"
         f"Mensagem do colaborador: {mensagem}"
     )
@@ -132,12 +194,16 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
         ]
     )
 
-    dados = _extrair_json(str(resposta.content))
+    texto_resposta = _obter_texto_resposta(resposta.content)
+    dados = _extrair_json(texto_resposta)
 
-    if dados.get("escolhido") is not True:
+    escolhido = dados.get("escolhido")
+    if escolhido is not True and str(escolhido).strip().lower() != "true":
+        sugestoes = _validar_sugestoes(dados.get("sugestoes") or [], horarios)
         return Interpretacao(
             escolhido=False,
             motivo=dados.get("motivo") or "Não foi possível identificar um horário no pedido.",
+            sugestoes=sugestoes,
         )
 
     horario_id = str(dados.get("horario_id", ""))

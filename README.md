@@ -409,6 +409,29 @@ O 201 tem contrato OpenAPI tipado: sucesso, mensagem, interpretacao nullable e
 agendamento completo, com profissional opcional. Erros do grafo preservam
 sucesso/mensagem/erro/sugestoes; 422 tambem documenta detail da validacao do FastAPI.
 
+### Interpretação Por IA
+
+Quando a requisição traz somente `mensagem`, o interpretador (`app/agents/interpretador.py`) envia ao Gemini a data de hoje, a lista de horários livres e o pedido do colaborador. O modelo devolve um JSON; o `horario_id` escolhido é sempre revalidado contra a lista real antes de seguir para o fluxo, e sugestões com ids inexistentes são descartadas.
+
+Comportamento atual:
+
+- A data de hoje e cada horário enviados ao modelo trazem o dia da semana em português, por exemplo `2026-10-15 (quinta-feira)`, para que pedidos como "quinta de manhã" não dependam de cálculo de calendário pelo modelo.
+- Vagas de um mesmo lote (mesma data, início, fim e profissional) são agrupadas em uma única linha com `vagas_livres`. Antes, lotes com capacidade alta ocupavam as 40 linhas do prompt e escondiam os dias seguintes.
+- A extração do JSON aceita texto ou cercas de markdown ao redor da resposta e escolhe o primeiro objeto válido; respostas que não sejam um objeto JSON são rejeitadas.
+- `escolhido` também é aceito como a string `"true"`; `sugestoes: null` é tratado como lista vazia.
+- A chamada ao Gemini tem timeout de 30 segundos e até 2 tentativas.
+
+Erros do passo de IA:
+
+| Situação | HTTP | `erro` |
+| --- | --- | --- |
+| Sem `horario_id` e sem `mensagem` | 422 | `solicitacao_incompleta` |
+| Pedido vago ou sem vaga adequada (com `sugestoes` quando houver) | 422 | `interpretacao_inconclusiva` |
+| `GOOGLE_API_KEY` ausente ou dependência não instalada | 503 | `interpretador_indisponivel` |
+| Resposta do modelo que não é JSON válido | 502 | `erro_llm` |
+| Falha de rede, cota ou erro do provedor | 502 | `erro_llm` |
+| Banco não configurado | 503 | `banco_nao_configurado` |
+
 Fluxo textual:
 
 ```text
@@ -448,142 +471,6 @@ resultado = agendamento_graph.invoke({
     "colaborador_id": "uuid-do-colaborador",
     "horario_id": "uuid-do-horario",
 })
-```
-
-## Arquitetura Multiagente
-
-O endpoint principal de chat é `POST /chat`. Ele passa a mensagem para o Orquestrador, que chama o Agente de Recepção, interpreta a intenção retornada e decide qual componente deve responder.
-
-O Orquestrador não possui regra própria de agendamento, saúde, bem-estar ou intervalo de 15 dias. Ele também não acessa Supabase, repositories ou SQL diretamente.
-
-A Recepção identifica intenção. O Orquestrador decide qual componente será chamado. O Agente de Bem-Estar responde orientações gerais permitidas. O LangGraph de Agendamento executa o fluxo operacional quando chamado pelos endpoints próprios.
-
-As duas camadas funcionam de forma determinística, sem LLM, OpenAI, Gemini, memória, checkpointer ou chamada externa de IA. Nenhuma delas realiza diagnóstico, prescrição, indicação de tratamento ou recomendação clínica. O acesso ao banco continua separado nos fluxos e serviços próprios da API.
-
-```text
-Usuário
-↓
-POST /chat
-↓
-Orquestrador
-↓
-Agente de Recepção
-├── AGENDAMENTO
-│      ↓
-│  Agente/Fluxo de Agendamento
-│
-├── ORIENTACAO_BEM_ESTAR
-│      ↓
-│  Agente de Bem-Estar
-│
-├── SAUDE_SENSIVEL
-│      ↓
-│  Resposta segura
-│
-└── demais intenções
-```
-
-Para consultas como "Tem horário amanhã de manhã?", o chat já consulta disponibilidade real:
-
-```text
-Usuário
-↓
-Recepção
-↓
-Orquestrador
-↓
-Service de disponibilidade
-↓
-Repository
-↓
-Supabase
-↓
-horários disponíveis
-↓
-Chat
-```
-
-O chat textual interpreta seleções simples dentro da mesma sessão, como "quero o segundo" ou "pode ser 9h". Quando encontra opções, ele retorna `horario_id`, `massoterapeuta_id` e o índice de cada opção para que o cliente mantenha uma escolha explícita.
-
-Após a escolha, o cliente envia os IDs para:
-
-```text
-POST /chat/agendamento/confirmar
-```
-
-Esse endpoint monta o state inicial e executa o LangGraph real de agendamento:
-
-```text
-Consulta pelo chat
-↓
-opções disponíveis
-↓
-seleção explícita do usuário
-↓
-POST /chat/agendamento/confirmar
-↓
-LangGraph de Agendamento
-↓
-Services
-↓
-Repositories
-↓
-Supabase
-```
-
-A recepção continua disponível em `POST /chat/recepcao`, o agente de bem-estar em `POST /agents/bem-estar` e o fluxo operacional isolado em `POST /graph/agendamentos`.
-
-O chat também possui memória curta em processo para continuidade simples da sessão:
-
-```text
-"Tem horário amanhã de manhã?"
-↓
-opções numeradas
-↓
-"quero o segundo"
-↓
-seleção da opção salva na sessão
-↓
-"Deseja confirmar?"
-↓
-"sim"
-↓
-LangGraph
-↓
-agendamento
-```
-
-O `POST /chat` aceita `session_id` opcional. Quando ele não é enviado, a API gera um novo identificador e o devolve na resposta. O `colaborador_id` também pode ser enviado no payload e fica associado à sessão para a confirmação explícita do agendamento.
-
-A memória guarda apenas dados mínimos da conversa, como últimas opções de horário, seleção atual, dados extraídos e `colaborador_id`. Ela não guarda histórico completo nem conteúdo sensível de saúde. O TTL padrão é de 30 minutos de inatividade, configurável por `SESSION_TTL_MINUTES`.
-
-Essa memória é temporária, se perde ao reiniciar a API e não é adequada para múltiplos workers ou múltiplas instâncias. Uma evolução futura pode usar Redis, banco ou checkpointer apropriado.
-
-## Gemini No Agente De Recepção
-
-O Agente de Recepção pode usar Gemini para melhorar a interpretação de linguagem natural livre, mantendo o classificador determinístico como fallback. A saída do modelo é validada em formato estruturado com intenção, confiança, referência de data e período.
-
-Fluxo de classificação:
-
-```text
-mensagem
-↓
-Gemini configurado?
-├── sim → classificação estruturada
-└── não → classificador determinístico
-```
-
-Se a chamada ao Gemini falhar, exceder timeout, retornar JSON inválido, usar intenção fora do enum ou vier com confiança abaixo do limite configurado, o sistema volta automaticamente para o classificador determinístico.
-
-O Gemini não decide regras de negócio, não aplica a regra dos 15 dias, não confirma agendamento e não acessa Supabase. Ele recebe somente a mensagem textual corrente necessária para classificar a intenção. Dados sensíveis persistidos, informações clínicas de banco, diagnósticos, medicamentos ou dados de terceiros não devem ser enviados ao modelo.
-
-Variáveis opcionais:
-
-```text
-GEMINI_API_KEY=
-GEMINI_MODEL=gemini-3.8-flash
-LLM_CONFIDENCE_THRESHOLD=0.60
-GEMINI_TIMEOUT_SECONDS=5
 ```
 
 ## Como Preparar Para GitHub

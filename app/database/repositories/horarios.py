@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import date
 from uuid import UUID
 
 from postgrest.exceptions import APIError
@@ -56,30 +56,6 @@ def listar_horarios_disponiveis(a_partir_de: date | None = None) -> list[dict]:
     )
 
 
-def buscar_horarios_disponiveis(
-    data_consulta: date,
-    hora_inicio: time | None = None,
-    hora_fim: time | None = None,
-) -> list[dict]:
-    query = (
-        get_supabase_client()
-        .table("horarios_disponiveis")
-        .select("*")
-        .eq("disponivel", True)
-        .eq("data", data_consulta.isoformat())
-    )
-
-    if hora_inicio is not None:
-        query = query.gte("hora_inicio", hora_inicio.isoformat())
-
-    if hora_fim is not None:
-        query = query.lte("hora_inicio", hora_fim.isoformat())
-
-    response = query.order("hora_inicio").execute()
-
-    return response.data or []
-
-
 def buscar_horario_por_id(horario_id: UUID) -> dict | None:
     response = (
         get_supabase_client()
@@ -132,6 +108,11 @@ def atualizar_disponibilidade_horario(horario_id: UUID, disponivel: bool) -> dic
 
 
 def reservar_horario_disponivel(horario_id: UUID) -> dict | None:
+    """Mantido apenas como fallback.
+
+    O caminho oficial de reserva passou a ser a RPC transacional
+    criar_agendamento_transacional (ver database/rpc_agendamentos.sql).
+    """
     response = (
         get_supabase_client()
         .table("horarios_disponiveis")
