@@ -1,8 +1,34 @@
 from app.graphs.agendamento.state import AgendamentoState
 
 
+def decidir_apos_classificacao(state: AgendamentoState) -> str:
+    if state.get("erro"):
+        return "erro"
+
+    if state.get("intencao") == "agendar":
+        return "agendar"
+
+    if state.get("intencao") == "cancelar":
+        return "cancelar"
+
+    return "erro"
+
+
+def decidir_apos_interpretacao_cancelamento(state: AgendamentoState) -> str:
+    if state.get("erro"):
+        return "erro"
+
+    if state.get("agendamento_id"):
+        return "continuar"
+
+    return "erro"
+
+
 def decidir_apos_interpretacao(state: AgendamentoState) -> str:
-    if state.get("erro") is None:
+    if state.get("erro"):
+        return "erro"
+
+    if state.get("horario_id") and state.get("massoterapeuta_id"):
         return "continuar"
 
     return "erro"

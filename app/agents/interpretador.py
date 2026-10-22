@@ -1,53 +1,67 @@
 import json
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from app.agents.llm import LLMConfigurationError, get_llm
-from app.core.datas import data_local
+from app.database.repositories.agendamentos import listar_agendamentos_ativos_do_colaborador
 from app.database.repositories.horarios import listar_horarios_disponiveis
 
 MAX_HORARIOS_NO_PROMPT = 40
 
-DIAS_SEMANA = (
-    "segunda-feira",
-    "terça-feira",
-    "quarta-feira",
-    "quinta-feira",
-    "sexta-feira",
-    "sábado",
-    "domingo",
-)
-
 SYSTEM_PROMPT = """Você é um assistente de agendamento de massoterapia corporativa.
 
 Receberá a mensagem de um colaborador e uma lista de horários disponíveis.
-Sua tarefa é escolher UMA vaga da lista que melhor atenda ao pedido.
+Sua tarefa é escolher UM horário da lista que melhor atenda ao pedido.
 
 Regras obrigatórias:
 - Escolha SOMENTE um horario_id que exista exatamente na lista fornecida.
 - Nunca invente ids, datas ou horários.
-- Não escolha profissionais; a vaga é identificada somente por horario_id.
-- Se a mensagem for vaga demais ou nenhum horário servir exatamente, devolva escolhido = false.
-- Nesse caso, tente sugerir até 3 horários da lista que sejam os mais próximos do pedido
-  (mesmo dia da semana em outra data, mesmo período do dia, ou datas próximas). Cada sugestão
-  deve usar um horario_id que exista de verdade na lista. Se não houver nada minimamente
-  parecido, devolva sugestoes como uma lista vazia.
+- Se a mensagem for vaga demais ou nenhum horário servir, devolva escolhido = false.
 - Considere referências relativas de data usando a data de hoje informada.
-- Use o dia da semana indicado entre parênteses em cada horário; não calcule o dia da semana por conta própria.
 - "manhã" = antes de 12:00, "tarde" = entre 12:00 e 18:00, "noite" = após 18:00.
 
 Responda APENAS com um objeto JSON, sem markdown, sem crases, sem explicação fora dele:
-{"escolhido": true, "horario_id": "...", "justificativa": "..."}
+{"escolhido": true, "horario_id": "...", "massoterapeuta_id": "...", "justificativa": "..."}
 ou
-{"escolhido": false, "motivo": "...", "sugestoes": [{"horario_id": "...", "motivo": "..."}]}"""
+{"escolhido": false, "motivo": "..."}"""
+
+
+INTENCOES_VALIDAS = {"agendar", "cancelar", "remarcar", "outra"}
+
+PROMPT_INTENCAO = """Você classifica mensagens de colaboradores de um sistema de massoterapia corporativa.
+
+Classifique a intenção da mensagem em UMA das opções:
+- "agendar": quer marcar uma nova sessão (ex.: "quero massagem quinta de manhã", "tem horário amanhã?").
+- "cancelar": quer cancelar ou desmarcar uma sessão já marcada (ex.: "cancela minha massagem", "não vou poder ir sexta", "desmarcar meu horário").
+- "remarcar": quer trocar uma sessão já marcada por outro dia ou horário (ex.: "quero remarcar para segunda", "trocar meu horário").
+- "outra": qualquer outro assunto, ou quando a intenção não estiver clara.
+
+Responda APENAS com um objeto JSON, sem markdown, sem crases, sem explicação fora dele:
+{"intencao": "agendar"}"""
+
+PROMPT_CANCELAMENTO = """Você é um assistente de massoterapia corporativa.
+
+Receberá a mensagem de um colaborador que quer cancelar uma sessão e a lista dos agendamentos ativos dele.
+Sua tarefa é identificar QUAL agendamento da lista ele quer cancelar.
+
+Regras obrigatórias:
+- Escolha SOMENTE um agendamento_id que exista exatamente na lista fornecida.
+- Nunca invente ids, datas ou horários.
+- Se houver mais de um agendamento e a mensagem não indicar qual, devolva escolhido = false.
+- Se a data ou o horário citados não baterem com nenhum agendamento da lista, devolva escolhido = false.
+- Se houver apenas um agendamento e a mensagem não citar data nem horário, escolha esse agendamento.
+- Considere referências relativas de data usando a data de hoje informada.
+- "manhã" = antes de 12:00, "tarde" = entre 12:00 e 18:00, "noite" = após 18:00.
+
+Responda APENAS com um objeto JSON, sem markdown, sem crases, sem explicação fora dele:
+{"escolhido": true, "agendamento_id": "...", "justificativa": "..."}
+ou
+{"escolhido": false, "motivo": "..."}"""
 
 
 class InterpretacaoError(RuntimeError):
-    pass
-
-
-class InterpretacaoRespostaInvalidaError(InterpretacaoError):
     pass
 
 
@@ -58,57 +72,25 @@ class Interpretacao:
     massoterapeuta_id: str | None = None
     justificativa: str | None = None
     motivo: str | None = None
-    sugestoes: list[dict] | None = None
 
 
-def _dia_semana(valor) -> str:
-    try:
-        return DIAS_SEMANA[date.fromisoformat(str(valor)[:10]).weekday()]
-    except ValueError:
-        return "desconhecido"
-
-
-def _agrupar_horarios(horarios: list[dict]) -> list[tuple[dict, int]]:
-    grupos: dict[tuple, list[dict]] = {}
-    for horario in horarios:
-        chave = (
-            str(horario["data"]),
-            str(horario["hora_inicio"]),
-            str(horario["hora_fim"]),
-            str(horario.get("massoterapeuta_id") or ""),
-        )
-        grupos.setdefault(chave, []).append(horario)
-
-    return [(vagas[0], len(vagas)) for vagas in grupos.values()]
+@dataclass(frozen=True)
+class InterpretacaoCancelamento:
+    escolhido: bool
+    agendamento_id: str | None = None
+    justificativa: str | None = None
+    motivo: str | None = None
 
 
 def _formatar_horarios(horarios: list[dict]) -> str:
     linhas = []
-    for horario, vagas_livres in _agrupar_horarios(horarios)[:MAX_HORARIOS_NO_PROMPT]:
+    for horario in horarios[:MAX_HORARIOS_NO_PROMPT]:
         linhas.append(
-            f"- horario_id={horario['id']} | data={horario['data']} ({_dia_semana(horario['data'])}) "
-            f"| inicio={horario['hora_inicio']} | fim={horario['hora_fim']} | vagas_livres={vagas_livres}"
+            f"- horario_id={horario['id']} | massoterapeuta_id={horario['massoterapeuta_id']} "
+            f"| data={horario['data']} | inicio={horario['hora_inicio']} | fim={horario['hora_fim']}"
         )
 
     return "\n".join(linhas)
-
-
-def _obter_texto_resposta(conteudo) -> str:
-    if isinstance(conteudo, str):
-        return conteudo
-
-    if isinstance(conteudo, list):
-        partes = []
-        for bloco in conteudo:
-            if isinstance(bloco, str):
-                partes.append(bloco)
-            elif isinstance(bloco, dict):
-                texto = bloco.get("text")
-                if texto:
-                    partes.append(str(texto))
-        return "\n".join(partes)
-
-    return str(conteudo)
 
 
 def _extrair_json(texto: str) -> dict:
@@ -116,62 +98,45 @@ def _extrair_json(texto: str) -> dict:
     limpo = re.sub(r"^```(?:json)?", "", limpo).strip()
     limpo = re.sub(r"```$", "", limpo).strip()
 
-    dados = None
     try:
-        dados = json.loads(limpo)
+        return json.loads(limpo)
     except json.JSONDecodeError:
-        decodificador = json.JSONDecoder()
-        for inicio in re.finditer(r"\{", limpo):
-            try:
-                candidato, _ = decodificador.raw_decode(limpo[inicio.start():])
-            except json.JSONDecodeError:
-                continue
-            if isinstance(candidato, dict):
-                dados = candidato
-                break
+        match = re.search(r"\{.*\}", limpo, re.DOTALL)
+        if match is None:
+            raise InterpretacaoError("Resposta do modelo não é um JSON válido.")
 
-    if not isinstance(dados, dict):
-        raise InterpretacaoRespostaInvalidaError("Resposta do modelo não é um JSON válido.")
-
-    return dados
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise InterpretacaoError("Resposta do modelo não é um JSON válido.") from exc
 
 
-def _validar_sugestoes(sugestoes_brutas: list, horarios: list[dict]) -> list[dict]:
-    if not sugestoes_brutas or not isinstance(sugestoes_brutas, list):
-        return []
+DIAS_SEMANA = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
 
-    horarios_por_id = {str(horario["id"]): horario for horario in horarios}
-    sugestoes_validas = []
 
-    for sugestao in sugestoes_brutas[:3]:
-        if not isinstance(sugestao, dict):
-            continue
+def hoje_local() -> date:
+    return datetime.now(ZoneInfo("America/Recife")).date()
 
-        horario_id = str(sugestao.get("horario_id", ""))
-        horario_real = horarios_por_id.get(horario_id)
 
-        if horario_real is None:
-            continue
+def _texto_da_resposta(content) -> str:
+    if isinstance(content, str):
+        return content
 
-        sugestoes_validas.append(
-            {
-                "horario_id": str(horario_real["id"]),
-                "massoterapeuta_id": (
-                    str(horario_real["massoterapeuta_id"]) if horario_real.get("massoterapeuta_id") else None
-                ),
-                "data": str(horario_real["data"]),
-                "hora_inicio": str(horario_real["hora_inicio"]),
-                "hora_fim": str(horario_real["hora_fim"]),
-                "motivo": sugestao.get("motivo"),
-            }
-        )
+    if isinstance(content, list):
+        partes = []
+        for parte in content:
+            if isinstance(parte, str):
+                partes.append(parte)
+            elif isinstance(parte, dict) and parte.get("type") == "text":
+                partes.append(parte.get("text", ""))
+        return "".join(partes)
 
-    return sugestoes_validas
+    return str(content)
 
 
 def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretacao:
-    data_referencia = hoje or data_local()
-    horarios = listar_horarios_disponiveis(data_referencia)
+    hoje = hoje or hoje_local()
+    horarios = listar_horarios_disponiveis(a_partir_de=hoje)
 
     if not horarios:
         return Interpretacao(escolhido=False, motivo="Não há horários disponíveis na agenda.")
@@ -181,8 +146,10 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
     except LLMConfigurationError as exc:
         raise InterpretacaoError(str(exc)) from exc
 
+    data_referencia = f"{hoje.isoformat()} ({DIAS_SEMANA[hoje.weekday()]})"
+
     user_prompt = (
-        f"Data de hoje: {data_referencia.isoformat()} ({_dia_semana(data_referencia.isoformat())})\n\n"
+        f"Data de hoje: {data_referencia}\n\n"
         f"Horários disponíveis:\n{_formatar_horarios(horarios)}\n\n"
         f"Mensagem do colaborador: {mensagem}"
     )
@@ -194,16 +161,12 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
         ]
     )
 
-    texto_resposta = _obter_texto_resposta(resposta.content)
-    dados = _extrair_json(texto_resposta)
+    dados = _extrair_json(_texto_da_resposta(resposta.content))
 
-    escolhido = dados.get("escolhido")
-    if escolhido is not True and str(escolhido).strip().lower() != "true":
-        sugestoes = _validar_sugestoes(dados.get("sugestoes") or [], horarios)
+    if dados.get("escolhido") is not True:
         return Interpretacao(
             escolhido=False,
             motivo=dados.get("motivo") or "Não foi possível identificar um horário no pedido.",
-            sugestoes=sugestoes,
         )
 
     horario_id = str(dados.get("horario_id", ""))
@@ -222,8 +185,98 @@ def interpretar_mensagem(mensagem: str, hoje: date | None = None) -> Interpretac
     return Interpretacao(
         escolhido=True,
         horario_id=str(horario_escolhido["id"]),
-        massoterapeuta_id=(
-            str(horario_escolhido["massoterapeuta_id"]) if horario_escolhido.get("massoterapeuta_id") else None
-        ),
+        massoterapeuta_id=str(horario_escolhido["massoterapeuta_id"]),
+        justificativa=dados.get("justificativa"),
+    )
+
+
+def identificar_intencao(mensagem: str) -> str:
+    try:
+        llm = get_llm()
+    except LLMConfigurationError as exc:
+        raise InterpretacaoError(str(exc)) from exc
+
+    resposta = llm.invoke(
+        [
+            {"role": "system", "content": PROMPT_INTENCAO},
+            {"role": "user", "content": f"Mensagem do colaborador: {mensagem}"},
+        ]
+    )
+
+    dados = _extrair_json(_texto_da_resposta(resposta.content))
+    intencao = str(dados.get("intencao", "")).strip().lower()
+
+    return intencao if intencao in INTENCOES_VALIDAS else "outra"
+
+
+def _formatar_agendamentos(agendamentos: list[dict]) -> str:
+    return "\n".join(
+        f"- agendamento_id={agendamento['id']} | data={agendamento['data_agendamento']} "
+        f"| inicio={agendamento['hora_inicio']} | fim={agendamento['hora_fim']}"
+        for agendamento in agendamentos
+    )
+
+
+def _descrever_agendamento(agendamento: dict) -> str:
+    data = date.fromisoformat(str(agendamento["data_agendamento"]))
+    hora = str(agendamento["hora_inicio"])[:5]
+    return f"{DIAS_SEMANA[data.weekday()]}, {data.strftime('%d/%m/%Y')} às {hora}"
+
+
+def interpretar_pedido_cancelamento(
+    mensagem: str,
+    colaborador_id: str,
+    hoje: date | None = None,
+) -> InterpretacaoCancelamento:
+    hoje = hoje or hoje_local()
+    agendamentos = listar_agendamentos_ativos_do_colaborador(colaborador_id, hoje)
+
+    if not agendamentos:
+        return InterpretacaoCancelamento(
+            escolhido=False,
+            motivo="Você não tem agendamentos ativos para cancelar.",
+        )
+
+    try:
+        llm = get_llm()
+    except LLMConfigurationError as exc:
+        raise InterpretacaoError(str(exc)) from exc
+
+    data_referencia = f"{hoje.isoformat()} ({DIAS_SEMANA[hoje.weekday()]})"
+
+    user_prompt = (
+        f"Data de hoje: {data_referencia}\n\n"
+        f"Agendamentos ativos do colaborador:\n{_formatar_agendamentos(agendamentos)}\n\n"
+        f"Mensagem do colaborador: {mensagem}"
+    )
+
+    resposta = llm.invoke(
+        [
+            {"role": "system", "content": PROMPT_CANCELAMENTO},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+
+    dados = _extrair_json(_texto_da_resposta(resposta.content))
+    agendamento_id = str(dados.get("agendamento_id", ""))
+
+    escolhido = next(
+        (agendamento for agendamento in agendamentos if str(agendamento["id"]) == agendamento_id),
+        None,
+    )
+
+    if dados.get("escolhido") is not True or escolhido is None:
+        lista = "; ".join(_descrever_agendamento(agendamento) for agendamento in agendamentos)
+        return InterpretacaoCancelamento(
+            escolhido=False,
+            motivo=(
+                "Não identifiquei qual agendamento você quer cancelar. "
+                f"Seus agendamentos ativos: {lista}."
+            ),
+        )
+
+    return InterpretacaoCancelamento(
+        escolhido=True,
+        agendamento_id=str(escolhido["id"]),
         justificativa=dados.get("justificativa"),
     )
