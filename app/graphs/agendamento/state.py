@@ -4,6 +4,9 @@ from typing import Any, NotRequired, TypedDict
 class AgendamentoState(TypedDict):
 
     colaborador_id: str
+    colaborador_autenticado_id: NotRequired[str | None]
+    agendamento_id: NotRequired[str | None]
+    acao: NotRequired[str]
 
     massoterapeuta_id: NotRequired[str | None]
     horario_id: NotRequired[str | None]

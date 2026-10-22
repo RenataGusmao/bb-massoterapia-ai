@@ -194,6 +194,8 @@ def executar_agendamento(state: AgendamentoState) -> AgendamentoState:
 
 
 def responder_sucesso(state: AgendamentoState) -> AgendamentoState:
+    if state.get("acao") == "cancelar":
+        return {**state, "sucesso": True, "status_http": 200}
     return {
         **state,
         "sucesso": True,

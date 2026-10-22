@@ -7,6 +7,7 @@ from app.database.repositories.agendamentos import (
     AgendamentoRPCError,
     atualizar_status_agendamento,
     buscar_agendamentos_validos_no_intervalo,
+    buscar_agendamento_do_colaborador,
     criar_agendamento_transacional,
 )
 from app.database.repositories.massoterapeutas import buscar_massoterapeuta_por_id
@@ -243,3 +244,10 @@ def alterar_status_agendamento(agendamento_id: UUID, novo_status: AgendamentoSta
         return atualizar_status_agendamento(agendamento_id, status_valor)
     except AgendamentoRPCError as exc:
         raise _traduzir_erro_rpc(exc) from exc
+
+
+def cancelar_agendamento_do_colaborador(agendamento_id: UUID, colaborador_id: UUID) -> dict:
+    reserva = buscar_agendamento_do_colaborador(agendamento_id, colaborador_id)
+    if reserva is None or str(reserva["colaborador_id"]) != str(colaborador_id):
+        raise AgendamentoNaoEncontradoError("Agendamento nao encontrado.")
+    return alterar_status_agendamento(agendamento_id, AgendamentoStatus.CANCELADO)

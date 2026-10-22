@@ -16,11 +16,16 @@ from app.graphs.agendamento.nodes import (
     validar_intervalo,
 )
 from app.graphs.agendamento.state import AgendamentoState
+from app.graphs.agendamento.nodes_cancelamento import (
+    classificar_solicitacao, decidir_solicitacao, executar_cancelamento,
+)
 
 
 
 graph_builder = StateGraph(AgendamentoState)
 graph_builder.add_node("receber_solicitacao", receber_solicitacao)
+graph_builder.add_node("classificar_solicitacao", classificar_solicitacao)
+graph_builder.add_node("executar_cancelamento", executar_cancelamento)
 graph_builder.add_node("interpretar_solicitacao", interpretar_solicitacao)
 graph_builder.add_node("validar_entidades", validar_entidades)
 graph_builder.add_node("validar_intervalo", validar_intervalo)
@@ -30,7 +35,15 @@ graph_builder.add_node("responder_erro", responder_erro)
 
 
 graph_builder.add_edge(START, "receber_solicitacao")
-graph_builder.add_edge("receber_solicitacao", "interpretar_solicitacao")
+graph_builder.add_edge("receber_solicitacao", "classificar_solicitacao")
+graph_builder.add_conditional_edges(
+    "classificar_solicitacao", decidir_solicitacao,
+    {"criar": "interpretar_solicitacao", "cancelar": "executar_cancelamento", "erro": "responder_erro"},
+)
+graph_builder.add_conditional_edges(
+    "executar_cancelamento", decidir_apos_execucao,
+    {"sucesso": "responder_sucesso", "erro": "responder_erro"},
+)
 
 
 graph_builder.add_conditional_edges(

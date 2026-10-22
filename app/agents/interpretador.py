@@ -25,6 +25,7 @@ Receberá a mensagem de um colaborador e uma lista de horários disponíveis.
 Sua tarefa é escolher UMA vaga da lista que melhor atenda ao pedido.
 
 Regras obrigatórias:
+- Pedidos de cancelar, desmarcar ou reagendar nunca devem escolher uma vaga; devolva escolhido = false.
 - Escolha SOMENTE um horario_id que exista exatamente na lista fornecida.
 - Nunca invente ids, datas ou horários.
 - Não escolha profissionais; a vaga é identificada somente por horario_id.

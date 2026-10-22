@@ -6,6 +6,9 @@ Neste momento, o projeto possui integração com Supabase PostgreSQL, autentica�
 
 ## Agenda Automatica
 
+O LangGraph tambem cancela reservas proprias por linguagem natural em
+POST /graph/agendamentos. Consulte [cancelamento, contratos e exemplos](database/README_cancelamento_langgraph.md).
+
 Os unicos perfis autenticados sao admin e colaborador. O perfil terceirizada e
 seus endpoints foram retirados; massoterapeutas nao possuem conta ou role.
 A agenda e gerada no inicio do backend e a cada hora, em janela movel de 31 dias,

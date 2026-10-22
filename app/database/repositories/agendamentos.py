@@ -19,6 +19,10 @@ class AgendamentoRPCContractError(RuntimeError):
     pass
 
 
+class ConsultaAgendamentosIncompletaError(RuntimeError):
+    pass
+
+
 def _executar_rpc(nome: str, parametros: dict) -> dict:
     try:
         response = get_supabase_client().rpc(nome, parametros).execute()
@@ -82,6 +86,23 @@ def listar_agendamentos_por_colaborador(colaborador_id: UUID) -> list[dict]:
         .execute()
     )
     return response.data or []
+
+
+def buscar_agendamento_do_colaborador(agendamento_id: UUID, colaborador_id: UUID) -> dict | None:
+    resposta = (get_supabase_client().table("agendamentos").select("*")
+                .eq("id", str(agendamento_id)).eq("colaborador_id", str(colaborador_id))
+                .limit(1).execute())
+    return resposta.data[0] if resposta.data else None
+
+
+def listar_agendamentos_para_cancelamento(colaborador_id: UUID) -> list[dict]:
+    resposta = (get_supabase_client().table("agendamentos").select("*", count="exact")
+                .eq("colaborador_id", str(colaborador_id))
+                .order("data_agendamento", desc=True).order("hora_inicio", desc=True).execute())
+    reservas = resposta.data or []
+    if resposta.count is None or resposta.count != len(reservas):
+        raise ConsultaAgendamentosIncompletaError("Consulta limitada: informe agendamento_id.")
+    return reservas
 
 
 def buscar_ultimo_agendamento_valido(colaborador_id: UUID) -> dict | None:

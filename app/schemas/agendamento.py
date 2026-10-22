@@ -28,10 +28,11 @@ class AgendamentoStatusUpdate(BaseModel):
 
 
 class AgendamentoGraphRequest(BaseModel):
-    """Aceita os dois caminhos do grafo.
+    """Criacao estruturada/textual e cancelamento de reservas proprias.
 
     Estruturado: colaborador_id + horario_id (vaga).
     Com IA:      colaborador_id + mensagem em texto livre.
+    Cancelar:    mensagem ou agendamento_id; identidade vem do JWT.
     """
 
     model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [
@@ -39,14 +40,17 @@ class AgendamentoGraphRequest(BaseModel):
          "horario_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
         {"colaborador_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
          "mensagem": "Quero massagem quinta de manha."},
+        {"mensagem": "Quero cancelar meu agendamento."},
+        {"mensagem": "Cancela minha massagem do dia 26/10."},
     ]})
 
-    colaborador_id: UUID
+    colaborador_id: UUID | None = Field(default=None, description="Para colaborador, omitido usa o vinculo do JWT. Admin informa o alvo da criacao.")
     horario_id: UUID | None = None
+    agendamento_id: UUID | None = Field(default=None, description="Reserva propria a cancelar; nao e o horario_id. Util para esclarecer ou repetir um cancelamento.")
     mensagem: str | None = Field(
         default=None,
         max_length=500,
-        description="Pedido em linguagem natural, ex.: 'quero massagem quinta de manhã'.",
+        description="Pedido de criacao ou cancelamento, ex.: 'quero massagem quinta de manha' ou 'quero desmarcar minha massagem de amanha'.",
     )
 
     @model_validator(mode="after")
@@ -54,9 +58,11 @@ class AgendamentoGraphRequest(BaseModel):
         estruturado = self.horario_id is not None
         texto = bool(self.mensagem and self.mensagem.strip())
 
-        if not estruturado and not texto:
+        if estruturado and self.agendamento_id:
+            raise ValueError("Nao combine horario_id de criacao e agendamento_id de cancelamento.")
+        if not estruturado and not texto and self.agendamento_id is None:
             raise ValueError(
-                "Envie horario_id, ou uma mensagem em texto livre."
+                "Envie horario_id, mensagem em texto livre ou agendamento_id para cancelar."
             )
 
         return self
