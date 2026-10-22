@@ -1,3 +1,6 @@
+<img width="1632" height="806" alt="image" src="https://github.com/user-attachments/assets/1048c2b3-e08b-406b-a8d4-ca98433a7235" />
+
+
 # BB Massoterapia AI
 
 Backend de agendamento de massoterapia corporativa, desenvolvido em Python com FastAPI, Supabase/PostgreSQL e LangGraph integrado ao Google Gemini. Centraliza a oferta de sessões, o acesso individual dos colaboradores e as regras de reserva, mantendo a decisão transacional no banco de dados.
