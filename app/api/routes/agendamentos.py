@@ -10,6 +10,7 @@ from app.database.repositories.agendamentos import (
 )
 from app.database.supabase import SupabaseConfigurationError
 from app.schemas.auth import UsuarioAutenticado, UsuarioRole
+from app.services.agenda_automatica import exigir_prontidao_http
 from app.schemas.agendamento import (
     AgendamentoCreate,
     AgendamentoResponse,
@@ -38,7 +39,7 @@ AGENDAMENTO_POST_RESPONSES = {
     409: {"description": "Conflito de negócio, como intervalo mínimo, horário ocupado ou massoterapeuta inativo."},
     422: {"description": "Dados inválidos ou horário incompatível com o massoterapeuta informado."},
     500: {"description": "Erro interno controlado."},
-    503: {"description": "Falha de infraestrutura ou banco não configurado."},
+    503: {"description": "Agenda ainda nao pronta, falha de infraestrutura ou banco nao configurado."},
 }
 
 
@@ -73,6 +74,7 @@ def cadastrar_agendamento(
     usuario: UsuarioAutenticado = Depends(require_agendamento_user),
 ) -> dict:
     autorizar_colaborador(usuario, agendamento.colaborador_id)
+    exigir_prontidao_http()
     try:
         return criar_agendamento_para_horario(agendamento)
     except ColaboradorNaoEncontradoError as exc:

@@ -23,6 +23,9 @@ class Settings:
     jwt_secret_key: str | None
     jwt_algorithm: str
     jwt_access_token_expire_minutes: int
+    agenda_leitura_token_sha256: str | None = None
+    agenda_geracao_automatica: bool = True
+    agenda_capacidade: int = 1
 
     def require_supabase(self) -> tuple[str, str]:
         if not self.supabase_url or not self.supabase_secret_key:
@@ -92,4 +95,7 @@ def get_settings() -> Settings:
             os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES"),
             60,
         ),
+        agenda_leitura_token_sha256=(os.getenv("AGENDA_LEITURA_TOKEN_SHA256") or "").strip().lower() or None,
+        agenda_geracao_automatica=os.getenv("AGENDA_GERACAO_AUTOMATICA", "true").lower() == "true",
+        agenda_capacidade=_parse_positive_int("AGENDA_CAPACIDADE", os.getenv("AGENDA_CAPACIDADE"), 1),
     )

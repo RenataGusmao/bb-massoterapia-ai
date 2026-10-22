@@ -4,18 +4,19 @@ API REST do MVP **BB Massoterapia AI**, criada em Python com FastAPI e preparada
 
 Neste momento, o projeto possui integração com Supabase PostgreSQL, autenticação JWT própria, controle básico de acesso por perfil, fluxo de agendamento com LangGraph/Gemini e regra de intervalo mínimo de 15 dias.
 
-## Acesso Institucional
+## Agenda Automatica
 
-A etapa 4 adiciona a role `terceirizada`, provisionamento administrativo em
-`POST /auth/terceirizadas` e agenda minimizada em `GET /agenda/terceirizada`.
-O admin atribui lotes explicitamente; nao ha acesso global nem cadastro publico.
-As consultas gerais de horarios e profissionais agora exigem JWT admin/colaborador.
-Consulte [contratos, migration 004 e exemplos Swagger](database/README_terceirizada.md).
-Migrations pendentes devem ser aplicadas manualmente na ordem 001 -> 002 -> 003 -> 004 -> 005.
-Nenhuma foi executada no Supabase real. Consulte o
-[guia de seguranca e manutencao](database/README_seguranca.md) antes da aplicacao:
-a 005 fecha o acesso direto aos objetos da aplicacao e instala os grants explicitos
-do servidor, preservando defaults e mecanismos internos administrados pelo Supabase.
+Os unicos perfis autenticados sao admin e colaborador. O perfil terceirizada e
+seus endpoints foram retirados; massoterapeutas nao possuem conta ou role.
+A agenda e gerada no inicio do backend e a cada hora, em janela movel de 31 dias,
+de segunda a sexta, exceto feriados nacionais. Sao dez intervalos diarios de
+30 minutos e uma vaga inicial por intervalo, preservando capacidade e historico.
+Bloqueios administrativos persistem apos geracao, reserva e cancelamento.
+Profissionais consultam GET /agenda/atendimentos com chave de leitura separada,
+sem JWT e sem identificadores ou dados pessoais dos colaboradores.
+Consulte [agenda, endpoints, seguranca e operacao](database/README_agenda_automatica.md).
+Para atualizar um banco que ja recebeu 001-005: aplicar manualmente 006, 007 e 008,
+nessa ordem e em manutencao. As migrations anteriores permanecem imutaveis.
 
 ## Estrutura
 
@@ -119,7 +120,7 @@ http://127.0.0.1:8000
 3. Abra o SQL Editor.
 4. Execute o conteúdo de `database/schema.sql`.
 5. Execute o conteúdo de `database/auth_schema.sql`.
-6. Execute as migrations 001 -> 002 -> 003 -> 004 -> 005, com clientes bloqueados
+6. Em banco novo, execute as migrations 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 -> 008, com clientes bloqueados
    durante toda a sequencia. Execute os diagnosticos e siga README_seguranca.md.
 
 O schema inicial cria as tabelas:
@@ -143,7 +144,10 @@ O intervalo de 15 dias é verificado na RPC e reforçado por constraint de exclu
 
 ## Pendências Técnicas
 
-A criação usa a RPC `criar_agendamento_transacional`: validações, reserva e inserção acontecem na mesma transação. Cancelamentos preservam o histórico e permitem reutilização da vaga. Em bancos existentes, aplique as migrations 001 -> 002 -> 003 -> 004 -> 005 antes de executar o backend atualizado.
+A criacao usa a RPC criar_agendamento_transacional: validacoes, reserva e insercao
+acontecem na mesma transacao. Cancelamentos preservam historico e permitem reuso
+quando o calendario e os bloqueios permitirem. Em banco ja atualizado ate 005,
+aplique somente 006, 007 e 008 antes de iniciar esta versao do backend.
 
 Consulte [database/README_agendamentos.md](database/README_agendamentos.md) para diagnóstico, ordem de aplicação, transições de status e testes reais de concorrência.
 
@@ -182,6 +186,7 @@ Rotas públicas:
 
 - `GET /`
 - `GET /health`
+- `GET /ready` (503 ate a agenda ser sincronizada e verificada no banco)
 - `GET /health/db`
 - `POST /auth/login`
 
@@ -196,9 +201,8 @@ Rotas para usuário autenticado:
 - `GET /massoterapeutas` e detalhe (admin ou colaborador)
 - `GET /horarios` e detalhe (admin ou colaborador)
 
-A terceirizada acessa somente `GET /auth/me` e `GET /agenda/terceirizada`
-com seu JWT. O login e as rotas tecnicas publicas continuam disponiveis.
-Ela nao acessa consultas administrativas, agendamentos individuais ou escritas.
+GET /agenda/atendimentos nao exige login, mas exige X-Agenda-Key e retorna
+somente intervalos e contagens. Nao e um endpoint publico irrestrito.
 
 Rotas exclusivas de administrador:
 
@@ -206,7 +210,10 @@ Rotas exclusivas de administrador:
 - `GET /colaboradores`
 - `POST /colaboradores`
 - `POST /auth/colaboradores`
-- `POST /auth/terceirizadas`
+- `POST /horarios/sincronizar`
+- `GET /horarios/bloqueios`
+- `POST /horarios/bloqueios`
+- `DELETE /horarios/bloqueios/{bloqueio_id}` (inativa, sem apagar)
 - `PATCH /agendamentos/{agendamento_id}/status`
 - `POST /horarios`
 - `POST /massoterapeutas`
@@ -216,7 +223,7 @@ O payload de agendamento continua recebendo `colaborador_id` para preservar o co
 ### Contas Individuais De Colaboradores
 
 JWT exige `sub`, `exp` e `role`: sub UUID textual, exp inteiro e role uma das
-tres existentes. O perfil atual no banco prevalece na autorizacao.
+duas existentes. O perfil atual no banco prevalece na autorizacao.
 Email nao textual recebe 422. Hash persistido invalido recebe 401 sem detalhes.
 RLS e grants impedem as roles SQL anon/authenticated de contornar o FastAPI;
 service_role usa a allowlist descrita no guia de seguranca.
@@ -245,7 +252,11 @@ Em bancos novos, o `auth_schema.sql` atualizado já inclui essa constraint. Nenh
 
 ## Disponibilidade Por Vagas
 
-Administradores cadastram lotes de vagas sem profissional usando capacidade e chave de idempotência em `POST /horarios`. Cada vaga tem ID próprio e pode ser reservada independentemente. Consulte [database/README_disponibilidade.md](database/README_disponibilidade.md) para contratos, compatibilidade e migration 003.
+O gerador reutiliza lotes/vagas existentes. POST /horarios permanece como
+compatibilidade administrativa para capacidade/excecoes, nao como rotina diaria.
+A disponibilidade efetiva e validada pelo calendario, pela janela e pelos
+bloqueios; os clientes consultam GET /horarios para obter os IDs das vagas.
+Consulte [database/README_agenda_automatica.md](database/README_agenda_automatica.md).
 
 A dependência antiga de `x-api-key` foi mantida temporariamente no código para compatibilidade, mas não é exigida junto com JWT nas rotas migradas.
 
@@ -265,6 +276,9 @@ API_KEY=
 JWT_SECRET_KEY=
 JWT_ALGORITHM=HS256
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60
+AGENDA_GERACAO_AUTOMATICA=true
+AGENDA_CAPACIDADE=1
+AGENDA_LEITURA_TOKEN_SHA256=
 PORT=8000
 ```
 

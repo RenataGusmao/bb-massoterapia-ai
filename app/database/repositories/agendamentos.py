@@ -25,6 +25,7 @@ def _executar_rpc(nome: str, parametros: dict) -> dict:
     except APIError as exc:
         codigos = {
             "23505": "horario_indisponivel",
+            "23514": "horario_indisponivel",
             "23P01": "intervalo_minimo",
             "40001": "conflito_concorrente",
             "40P01": "conflito_concorrente",

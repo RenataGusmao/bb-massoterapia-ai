@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 
 from app.core.security import autorizar_colaborador, get_current_user
 from app.schemas.auth import UsuarioAutenticado
+from app.services.agenda_automatica import exigir_prontidao_http
 from app.graphs.agendamento.graph import agendamento_graph
 from app.graphs.agendamento.state import AgendamentoState
 from app.schemas.agendamento import (
@@ -19,7 +20,7 @@ AGENDAMENTO_GRAPH_RESPONSES = {
     422: {"description": "Dados inválidos, pedido incompreensível ou horário incompatível."},
     500: {"description": "Erro interno controlado."},
     502: {"description": "Falha na chamada ao modelo de linguagem."},
-    503: {"description": "Falha de infraestrutura, banco ou IA não configurados."},
+    503: {"description": "Agenda ainda nao pronta, falha de infraestrutura, banco ou IA nao configurados."},
 }
 for codigo, contrato in AGENDAMENTO_GRAPH_RESPONSES.items():
     if codigo != 201:
@@ -40,6 +41,12 @@ def cadastrar_agendamento_com_grafo(
     usuario: UsuarioAutenticado = Depends(get_current_user),
 ):
     autorizar_colaborador(usuario, requisicao.colaborador_id)
+    try:
+        exigir_prontidao_http()
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, headers=exc.headers, content={
+            "sucesso": False, "mensagem": exc.detail, "erro": "agenda_nao_pronta",
+        })
     state_inicial: AgendamentoState = {
         "colaborador_id": str(requisicao.colaborador_id),
         "horario_id": str(requisicao.horario_id) if requisicao.horario_id else None,

@@ -129,6 +129,7 @@ def test_cadastro_exige_admin(client, role, esperado):
     ("horario_passado", 409), ("intervalo_existente", 409),
     ("intervalo_sobreposto", 409), ("idempotencia_conflitante", 409),
     ("capacidade_invalida", 422), ("periodo_invalido", 422), ("conflito_disponibilidade", 409),
+    ("calendario_indisponivel", 409),
 ])
 def test_conflitos_cadastro(client, monkeypatch, erro, status):
     autenticar()

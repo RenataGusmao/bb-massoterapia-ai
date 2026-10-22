@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 class UsuarioRole(StrEnum):
     COLABORADOR = "colaborador"
     ADMIN = "admin"
-    TERCEIRIZADA = "terceirizada"
 
 
 class LoginRequest(BaseModel):

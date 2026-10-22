@@ -34,6 +34,8 @@ def criar_access_token(
     role: UsuarioRole | str,
     expires_delta: timedelta | None = None,
 ) -> str:
+    if str(role) not in {role.value for role in UsuarioRole}:
+        raise ValueError("Perfil nao suportado.")
     settings = get_settings()
     expiracao = datetime.now(timezone.utc) + (
         expires_delta
@@ -109,6 +111,7 @@ def get_current_user(
         permitido = (
             usuario is not None
             and usuario.get("ativo", False)
+            and usuario.get("role") in {role.value for role in UsuarioRole}
             and validar_vinculo_colaborador(usuario)
         )
     except Exception as exc:
@@ -136,14 +139,6 @@ def require_agendamento_user(
 ) -> UsuarioAutenticado:
     if usuario.role not in {UsuarioRole.ADMIN, UsuarioRole.COLABORADOR}:
         raise HTTPException(status_code=403, detail="Perfil sem acesso a este recurso.")
-    return usuario
-
-
-def require_terceirizada(
-    usuario: UsuarioAutenticado = Depends(get_current_user),
-) -> UsuarioAutenticado:
-    if usuario.role != UsuarioRole.TERCEIRIZADA:
-        raise HTTPException(status_code=403, detail="Acesso restrito ao perfil institucional.")
     return usuario
 
 
