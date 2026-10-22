@@ -1,5 +1,9 @@
 # Acesso Institucional
 
+> HISTORICO: perfil e endpoints retirados pela migration 006. Nao seguir este
+> guia para novos usuarios. Consulte README_agenda_automatica.md. As migrations
+> 004/005 e seus testes PostgreSQL continuam como regressao do upgrade legado.
+
 ## Arquitetura e Escopo
 
 A role terceirizada reutiliza o login JWT, a consulta de usuario ativo a cada

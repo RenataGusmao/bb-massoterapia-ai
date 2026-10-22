@@ -1,5 +1,10 @@
 # Seguranca e Permissoes
 
+> Este guia descreve a etapa 005. A evolucao atual utiliza 006/007, retira o
+> perfil terceirizada e adiciona ACLs/RLS para calendario, bloqueios e leitura
+> agregada. Consulte README_agenda_automatica.md antes de implantar. Nao reaplique
+> 005 apos 006: as RPCs institucionais da allowlist antiga foram retiradas.
+
 ## Modelo Final
 
 As tabelas do BB Massoterapia AI sao privadas do backend; public pode conter

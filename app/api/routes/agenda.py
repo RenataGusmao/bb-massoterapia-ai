@@ -1,38 +1,40 @@
-from datetime import date
+import hashlib
+import hmac
+from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Response, Security
+from fastapi.security import APIKeyHeader
 
+from app.core.config import get_settings
 from app.core.datas import data_local
-from app.core.security import require_terceirizada
-from app.database.repositories.agenda import AcessoInstitucionalNegadoError, consultar_agenda
+from app.database.repositories.agenda import consultar_agenda
 from app.schemas.agenda import AgendaResponse
-from app.schemas.agendamento import AgendamentoStatus
-from app.schemas.auth import UsuarioAutenticado
 
-router = APIRouter(prefix="/agenda", tags=["agenda institucional"])
+router = APIRouter(prefix="/agenda", tags=["agenda de leitura"])
+agenda_key = APIKeyHeader(name="X-Agenda-Key", auto_error=False, scheme_name="AgendaLeitura")
 
 
-@router.get("/terceirizada", response_model=AgendaResponse)
-def agenda_terceirizada(
-    dia: date | None = Query(None, alias="data"),
+def autorizar_agenda(chave: str | None = Security(agenda_key)) -> None:
+    esperado = get_settings().agenda_leitura_token_sha256
+    if not esperado or len(esperado) != 64 or any(c not in "0123456789abcdef" for c in esperado):
+        raise HTTPException(503, "Acesso de leitura nao configurado.")
+    if chave is None or not hmac.compare_digest(hashlib.sha256(chave.encode()).hexdigest(), esperado):
+        raise HTTPException(401, "Chave de leitura invalida.")
+
+
+@router.get("/atendimentos", response_model=AgendaResponse, dependencies=[Depends(autorizar_agenda)])
+def agenda_atendimentos(
+    response: Response,
     data_inicio: date | None = None,
     data_fim: date | None = None,
-    statuses: list[AgendamentoStatus] | None = Query(None, alias="status", max_length=4),
-    pagina: int = Query(1, ge=1, le=10000),
-    tamanho_pagina: int = Query(50, ge=1, le=100),
-    usuario: UsuarioAutenticado = Depends(require_terceirizada),
 ) -> AgendaResponse:
-    if dia is not None and (data_inicio is not None or data_fim is not None):
-        raise HTTPException(422, "Use data ou periodo, nao ambos.")
-    if (data_inicio is None) != (data_fim is None):
-        raise HTTPException(422, "Informe data_inicio e data_fim juntos.")
-    inicio = dia or data_inicio or data_local()
-    fim = dia or data_fim or inicio
-    if not 0 <= (fim - inicio).days <= 30:
-        raise HTTPException(422, "Periodo deve conter entre 1 e 31 dias inclusivos.")
+    hoje = data_local()
+    inicio, fim = data_inicio or hoje, data_fim or (data_inicio or hoje)
+    if not hoje <= inicio <= fim <= hoje + timedelta(days=30):
+        raise HTTPException(422, "Consulte somente a janela dos proximos 31 dias.")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
     try:
-        return consultar_agenda(usuario.id, inicio, fim, statuses, pagina, tamanho_pagina)
-    except AcessoInstitucionalNegadoError as exc:
-        raise HTTPException(403, "Acesso institucional negado.") from exc
+        return consultar_agenda(inicio, fim)
     except Exception as exc:
         raise HTTPException(503, "Agenda temporariamente indisponivel.") from exc

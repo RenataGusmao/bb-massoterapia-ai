@@ -55,7 +55,7 @@ def test_login_email_invalido_422(client, monkeypatch, email):
     consultar.assert_not_called()
 
 
-@pytest.mark.parametrize("role", ["admin","colaborador","terceirizada"])
+@pytest.mark.parametrize("role", ["admin","colaborador"])
 def test_login_normalizado_roles_preservadas(client, monkeypatch, role):
     dados = {**usuario(role), "senha_hash": security.gerar_hash_senha("senha-ficticia")}
     buscar = Mock(return_value=dados)

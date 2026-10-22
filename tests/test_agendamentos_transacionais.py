@@ -122,6 +122,7 @@ def test_contrato_rpc_invalido_rejeitado(monkeypatch, dados):
 
 @pytest.mark.parametrize("sqlstate,codigo", [
     ("23505", "horario_indisponivel"), ("23P01", "intervalo_minimo"),
+    ("23514", "horario_indisponivel"),
     ("40001", "conflito_concorrente"), ("40P01", "conflito_concorrente"),
     ("55P03", "conflito_concorrente"),
 ])

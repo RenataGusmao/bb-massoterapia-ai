@@ -18,6 +18,10 @@ Intervalos históricos são identificados como legado. Sobreposições antigas p
 
 ## Cadastro
 
+> O fluxo principal agora e automatico (006/007). Consulte
+> README_agenda_automatica.md. POST /horarios permanece para compatibilidade e
+> capacidade administrativa; novas reservas respeitam o calendario efetivo.
+
 Apenas admin utiliza POST /horarios:
 
 ```json

@@ -14,6 +14,7 @@ from app.database.repositories.horarios import (
     buscar_horario_por_id,
 )
 from app.schemas.agendamento import AgendamentoCreate, AgendamentoStatus
+from app.services import agenda_automatica
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,11 @@ class AgendamentoContexto:
 class AgendamentoRegraError(ValueError):
     status_http = 409
     codigo = "conflito_agendamento"
+
+
+class AgendaNaoSincronizadaError(AgendamentoRegraError):
+    status_http = 503
+    codigo = "agenda_nao_pronta"
 
 
 class ColaboradorNaoEncontradoError(AgendamentoRegraError):
@@ -202,6 +208,10 @@ def executar_criacao_agendamento(
     contexto: AgendamentoContexto | None = None,
 ) -> dict:
     # The graph's context is advisory; the RPC revalidates under database locks.
+    try:
+        agenda_automatica.exigir_agenda_pronta()
+    except agenda_automatica.AgendaNaoProntaError as exc:
+        raise AgendaNaoSincronizadaError(str(exc)) from exc
     try:
         return criar_agendamento_transacional(
             agendamento.colaborador_id, None, agendamento.horario_id

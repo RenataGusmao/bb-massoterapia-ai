@@ -1,9 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from app.core.security import gerar_hash_senha
-from app.schemas.agenda import TerceirizadaContaCreate
-from app.database.repositories.agenda import (
-    AcessoInstitucionalNegadoError, EscopoInvalidoError, provisionar_terceirizada,
-)
 
 from app.core.security import (
     criar_access_token,
@@ -28,25 +23,6 @@ from app.services.auth import (
 
 
 router = APIRouter(prefix="/auth", tags=["autenticação"])
-
-
-@router.post("/terceirizadas", response_model=UsuarioAutenticado, status_code=201)
-def provisionar_institucional(
-    payload: TerceirizadaContaCreate,
-    admin: UsuarioAutenticado = Depends(require_admin),
-) -> dict:
-    try:
-        return provisionar_terceirizada(
-            admin.id, payload, gerar_hash_senha(payload.senha.get_secret_value()),
-        )
-    except UsuarioDuplicadoError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except EscopoInvalidoError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except AcessoInstitucionalNegadoError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(503, "Nao foi possivel provisionar a conta institucional.") from exc
 
 
 def _login_invalido() -> HTTPException:
@@ -75,6 +51,7 @@ def login(credenciais: LoginRequest) -> TokenResponse:
     if (
         usuario is None
         or not usuario.get("ativo", False)
+        or usuario.get("role") not in {"admin", "colaborador"}
         or not verificar_senha(credenciais.senha, usuario["senha_hash"])
     ):
         raise _login_invalido()

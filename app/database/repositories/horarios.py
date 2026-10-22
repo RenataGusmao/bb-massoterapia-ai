@@ -22,7 +22,7 @@ def listar_horarios(
     data_fim: date | None = None,
     dia: date | None = None,
 ) -> list[dict]:
-    query = get_supabase_client().table("horarios_disponiveis").select("*")
+    query = get_supabase_client().table("vagas_agenda").select("*")
 
     if apenas_disponiveis is True:
         query = query.eq("disponivel", True)
@@ -59,7 +59,7 @@ def listar_horarios_disponiveis(a_partir_de: date | None = None) -> list[dict]:
 def buscar_horario_por_id(horario_id: UUID) -> dict | None:
     response = (
         get_supabase_client()
-        .table("horarios_disponiveis")
+        .table("vagas_agenda")
         .select("*")
         .eq("id", str(horario_id))
         .limit(1)
@@ -83,6 +83,8 @@ def criar_horario(horario: HorarioCreate) -> DisponibilidadeRPCResponse:
     try:
         response = get_supabase_client().rpc("criar_disponibilidade_transacional", parametros).execute()
     except APIError as exc:
+        if exc.code == "23514":
+            raise DisponibilidadeError("calendario_indisponivel") from exc
         if exc.code in {"23505", "23P01", "40001", "40P01", "55P03"}:
             raise DisponibilidadeError("conflito_disponibilidade") from exc
         raise

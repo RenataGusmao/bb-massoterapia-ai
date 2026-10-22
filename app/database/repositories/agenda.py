@@ -3,53 +3,43 @@ from uuid import UUID
 
 from postgrest.exceptions import APIError
 
-from app.database.repositories.usuarios import UsuarioDuplicadoError
 from app.database.supabase import get_supabase_client
-from app.schemas.agenda import AgendaResponse, TerceirizadaContaCreate
-from app.schemas.auth import UsuarioAutenticado
-from app.schemas.agendamento import AgendamentoStatus
+from app.schemas.agenda import AgendaResponse, BloqueioCreate, BloqueioResponse
 
 
-class EscopoInvalidoError(ValueError):
+class AgendaConflitoError(ValueError):
     pass
 
 
-class AcessoInstitucionalNegadoError(PermissionError):
-    pass
+def listar_bloqueios(inicio: date, fim: date) -> list[BloqueioResponse]:
+    dados = get_supabase_client().table("bloqueios_agenda").select(
+        "id,data,hora_inicio,hora_fim,motivo,ativo"
+    ).gte("data", inicio.isoformat()).lte("data", fim.isoformat()).order("data").execute().data
+    return [BloqueioResponse.model_validate(item) for item in (dados or [])]
 
 
-def provisionar_terceirizada(
-    admin_id: UUID, payload: TerceirizadaContaCreate, senha_hash: str,
-) -> dict:
+def consultar_agenda(inicio: date, fim: date) -> AgendaResponse:
+    dados = get_supabase_client().rpc("consultar_agenda_leitura", {
+        "p_inicio": inicio.isoformat(), "p_fim": fim.isoformat(),
+    }).execute().data
+    return AgendaResponse.model_validate(dados)
+
+
+def criar_bloqueio(admin_id: UUID, payload: BloqueioCreate) -> BloqueioResponse:
     try:
-        resposta = get_supabase_client().rpc("provisionar_terceirizada", {
-            "p_admin_id": str(admin_id), "p_email": str(payload.email),
-            "p_senha_hash": senha_hash,
-            "p_disponibilidade_ids": [str(i) for i in payload.disponibilidade_ids],
-        }).execute()
+        dados = get_supabase_client().rpc("registrar_bloqueio_agenda", {
+            "p_admin_id": str(admin_id), "p_id": str(payload.chave_idempotencia),
+            "p_data": payload.data.isoformat(), "p_inicio": payload.hora_inicio.isoformat() if payload.hora_inicio else None,
+            "p_fim": payload.hora_fim.isoformat() if payload.hora_fim else None, "p_motivo": payload.motivo,
+        }).execute().data
     except APIError as exc:
-        if exc.code == "23505":
-            raise UsuarioDuplicadoError("Conta ou e-mail ja cadastrado.") from exc
-        if exc.code == "22023":
-            raise EscopoInvalidoError("Lotes autorizados inexistentes ou invalidos.") from exc
-        if exc.code == "42501":
-            raise AcessoInstitucionalNegadoError("Acesso institucional negado.") from exc
+        if exc.code in {"22023", "23505"}:
+            raise AgendaConflitoError("Chave ou dados do bloqueio em conflito.") from exc
         raise
-    return UsuarioAutenticado.model_validate(resposta.data).model_dump(mode="json")
+    return BloqueioResponse.model_validate(dados)
 
 
-def consultar_agenda(
-    usuario_id: UUID, inicio: date, fim: date,
-    statuses: list[AgendamentoStatus] | None, pagina: int, tamanho: int,
-) -> AgendaResponse:
-    try:
-        resposta = get_supabase_client().rpc("consultar_agenda_terceirizada", {
-            "p_usuario_id": str(usuario_id), "p_inicio": inicio.isoformat(),
-            "p_fim": fim.isoformat(), "p_statuses": [str(s) for s in statuses] if statuses else None,
-            "p_pagina": pagina, "p_tamanho": tamanho,
-        }).execute()
-    except APIError as exc:
-        if exc.code == "42501":
-            raise AcessoInstitucionalNegadoError("Acesso institucional negado.") from exc
-        raise
-    return AgendaResponse.model_validate(resposta.data)
+def desativar_bloqueio(admin_id: UUID, bloqueio_id: UUID) -> bool:
+    return bool(get_supabase_client().rpc("desativar_bloqueio_agenda", {
+        "p_admin_id": str(admin_id), "p_id": str(bloqueio_id),
+    }).execute().data)

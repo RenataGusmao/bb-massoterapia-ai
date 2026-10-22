@@ -1,61 +1,58 @@
 from datetime import date, time
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, field_validator
-
-from app.schemas.agendamento import AgendamentoStatus
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class TerceirizadaContaCreate(BaseModel):
+class BloqueioCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    chave_idempotencia: UUID
+    data: date
+    hora_inicio: time | None = None
+    hora_fim: time | None = None
+    motivo: str = Field(min_length=1, max_length=200)
 
-    email: EmailStr
-    senha: SecretStr = Field(
-        min_length=12, max_length=256,
-        json_schema_extra={"writeOnly": True, "format": "password"},
-    )
-    disponibilidade_ids: list[UUID] = Field(min_length=1, max_length=100)
-
-    @field_validator("email", mode="before")
+    @field_validator("motivo")
     @classmethod
-    def normalizar_email(cls, valor: object) -> object:
-        return valor.strip().lower() if isinstance(valor, str) else valor
+    def motivo_nao_vazio(cls, valor: str) -> str:
+        if not valor.strip():
+            raise ValueError("Informe um motivo.")
+        return valor.strip()
 
-    @field_validator("senha", mode="before")
+    @field_validator("hora_inicio", "hora_fim")
     @classmethod
-    def senha_forte(cls, valor: str | SecretStr) -> str:
-        if isinstance(valor, SecretStr):
-            valor = valor.get_secret_value()
-        if not isinstance(valor, str):
-            raise ValueError("Senha deve ser texto.")
-        if not (
-            any(c.isupper() for c in valor) and any(c.islower() for c in valor)
-            and any(c.isdigit() for c in valor)
-            and any(not c.isalnum() and not c.isspace() for c in valor)
-        ):
-            raise ValueError("Senha deve conter maiuscula, minuscula, numero e simbolo.")
+    def hora_local(cls, valor: time | None) -> time | None:
+        if valor is not None and valor.tzinfo is not None:
+            raise ValueError("Informe hora local sem offset.")
         return valor
 
-    @field_validator("disponibilidade_ids")
-    @classmethod
-    def lotes_distintos(cls, valor: list[UUID]) -> list[UUID]:
-        if len(set(valor)) != len(valor):
-            raise ValueError("Informe lotes distintos.")
-        return valor
+    @model_validator(mode="after")
+    def intervalo(self):
+        if (self.hora_inicio is None) != (self.hora_fim is None):
+            raise ValueError("Informe ambas as horas ou nenhuma para bloquear o dia.")
+        if self.hora_inicio is not None and self.hora_fim <= self.hora_inicio:
+            raise ValueError("Intervalo invalido.")
+        return self
+
+
+class BloqueioResponse(BaseModel):
+    id: UUID
+    data: date
+    hora_inicio: time | None
+    hora_fim: time | None
+    motivo: str
+    ativo: bool
 
 
 class AtendimentoOperacional(BaseModel):
-    id: UUID
+    model_config = ConfigDict(extra="forbid")
     data: date
     hora_inicio: time
     hora_fim: time
-    status: AgendamentoStatus
-    horario_id: UUID
-    disponibilidade_id: UUID
+    capacidade: int = Field(ge=1)
+    agendados: int = Field(ge=0)
+    disponiveis: int = Field(ge=0)
 
 
 class AgendaResponse(BaseModel):
-    itens: list[AtendimentoOperacional]
-    total: int = Field(ge=0)
-    pagina: int = Field(ge=1, le=10000)
-    tamanho_pagina: int = Field(ge=1, le=100)
+    itens: list[AtendimentoOperacional] = Field(max_length=310)
