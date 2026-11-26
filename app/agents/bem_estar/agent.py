@@ -3,6 +3,10 @@ from app.agents.bem_estar.safety import identificar_limite_de_seguranca, normali
 
 
 RESPOSTAS_PERMITIDAS = {
+    CategoriaBemEstar.PRE_MASSAGEM: (
+        "Antes da sessao, converse com o profissional sobre seu conforto e duvidas. "
+        "Se houver alguma condicao de saude ou restricao, procure orientacao individual qualificada."
+    ),
     CategoriaBemEstar.HIDRATACAO: (
         "Manter uma hidratação adequada ao longo do dia é uma medida simples de "
         "autocuidado e bem-estar."
@@ -42,6 +46,13 @@ RESPOSTA_SINAL_DE_ALERTA = (
 def processar_orientacao(mensagem: str) -> dict:
     categoria = classificar_orientacao(mensagem)
 
+    if categoria == CategoriaBemEstar.FORA_DE_ESCOPO:
+        return {
+            "categoria": categoria, "permitido": False,
+            "mensagem": "Posso orientar sobre massoterapia e bem-estar geral. Reformule seu pedido nesse contexto.",
+            "encaminhamento": None,
+        }
+
     if categoria == CategoriaBemEstar.SINAL_DE_ALERTA:
         return {
             "categoria": categoria,
@@ -73,6 +84,9 @@ def classificar_orientacao(mensagem: str) -> CategoriaBemEstar:
 
     texto = normalizar_mensagem(mensagem)
 
+    if _contem_termo(texto, ("antes da massagem", "antes da sessao", "pre massagem")):
+        return CategoriaBemEstar.PRE_MASSAGEM
+
     if _contem_termo(texto, ("agua", "hidratacao", "hidratar", "beber")):
         return CategoriaBemEstar.HIDRATACAO
 
@@ -85,7 +99,9 @@ def classificar_orientacao(mensagem: str) -> CategoriaBemEstar:
     if _contem_termo(texto, ("relaxar", "relaxamento", "descansar", "descanso", "pausa", "trabalho")):
         return CategoriaBemEstar.DESCANSO_RELAXAMENTO
 
-    return CategoriaBemEstar.BEM_ESTAR_GERAL
+    if _contem_termo(texto, ("massagem", "massoterapia", "bem estar", "bem-estar", "autocuidado")):
+        return CategoriaBemEstar.BEM_ESTAR_GERAL
+    return CategoriaBemEstar.FORA_DE_ESCOPO
 
 
 def _contem_termo(texto: str, termos: tuple[str, ...]) -> bool:

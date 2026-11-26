@@ -6,6 +6,9 @@ from app.llm.schemas import RecepcaoLLMClassification
 
 
 def classificar_intencao_com_llm(mensagem: str) -> tuple[Intencao, dict[str, str]]:
+    deterministica = classificar_intencao(mensagem)
+    if deterministica != Intencao.NAO_ENTENDIDO:
+        return deterministica, {}
     try:
         classificacao = classificar_recepcao_com_gemini(mensagem)
     except GeminiClassificationError:

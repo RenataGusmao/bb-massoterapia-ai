@@ -26,6 +26,8 @@ class Settings:
     agenda_leitura_token_sha256: str | None = None
     agenda_geracao_automatica: bool = True
     agenda_capacidade: int = 1
+    session_ttl_minutes: int = 30
+    llm_confidence_threshold: float = 0.60
 
     def require_supabase(self) -> tuple[str, str]:
         if not self.supabase_url or not self.supabase_secret_key:
@@ -84,7 +86,7 @@ def get_settings() -> Settings:
     return Settings(
         supabase_url=os.getenv("SUPABASE_URL"),
         supabase_secret_key=os.getenv("SUPABASE_SECRET_KEY"),
-        google_api_key=os.getenv("GOOGLE_API_KEY"),
+        google_api_key=os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or None,
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest"),
         allowed_origins=_parse_origins(os.getenv("ALLOWED_ORIGINS")),
         api_key=os.getenv("API_KEY") or None,
@@ -98,4 +100,5 @@ def get_settings() -> Settings:
         agenda_leitura_token_sha256=(os.getenv("AGENDA_LEITURA_TOKEN_SHA256") or "").strip().lower() or None,
         agenda_geracao_automatica=os.getenv("AGENDA_GERACAO_AUTOMATICA", "true").lower() == "true",
         agenda_capacidade=_parse_positive_int("AGENDA_CAPACIDADE", os.getenv("AGENDA_CAPACIDADE"), 1),
+        session_ttl_minutes=_parse_positive_int("SESSION_TTL_MINUTES", os.getenv("SESSION_TTL_MINUTES"), 30),
     )

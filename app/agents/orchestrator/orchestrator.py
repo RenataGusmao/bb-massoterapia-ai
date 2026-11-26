@@ -8,9 +8,11 @@ from app.agents.recepcao.classifier import normalizar_mensagem
 from app.agents.recepcao.intents import Intencao
 from app.graphs.agendamento.graph import agendamento_graph
 from app.graphs.agendamento.state import AgendamentoState
-from app.memory import get_or_create_session, save_session
+from app.memory import session_scope, save_session
 from app.memory.models import SessionContext
 from app.services.disponibilidade import consultar_disponibilidade_chat
+from app.services.agenda_automatica import exigir_prontidao_http
+from app.agents.bem_estar.safety import identificar_limite_de_seguranca
 
 
 RESPOSTA_COLETAR_DADOS = (
@@ -63,13 +65,21 @@ def processar_chat(
     mensagem: str,
     session_id: str | None = None,
     colaborador_id: str | None = None,
+    *,
+    usuario_id: str,
 ) -> dict:
-    session, _, expirou = get_or_create_session(session_id)
+    with session_scope(usuario_id, session_id, colaborador_id) as (session, expirou):
+        return _processar_turno(session, mensagem, expirou)
 
-    if colaborador_id is not None:
-        session.colaborador_id = colaborador_id
 
+def _processar_turno(session: SessionContext, mensagem: str, expirou: bool) -> dict:
     texto = normalizar_mensagem(mensagem)
+
+    # Safety must run before option/confirmation parsing, even during an active booking.
+    if identificar_limite_de_seguranca(mensagem) is not None:
+        estado = {**_estado_de_session(session), "mensagem": mensagem,
+                  "intencao": Intencao.SAUDE_SENSIVEL, "acao": "RESPONDER"}
+        return _responder_saude_sensivel(session, estado, expirou)
 
     if _eh_negacao(texto) and session.horario_selecionado is not None:
         return _cancelar_selecao(session, expirou)
@@ -77,10 +87,26 @@ def processar_chat(
     if _eh_confirmacao(texto) and session.horario_selecionado is not None:
         return _confirmar_agendamento(session, expirou)
 
+    if _eh_confirmacao(texto) and session.agendamento_confirmado is not None:
+        return _montar_resposta(
+            estado=_estado_de_session(session), sucesso=True,
+            resposta="Agendamento ja confirmado nesta sessao.",
+            status="agendamento_confirmado", acao="AGENDAMENTO_CONFIRMADO",
+            agendamento=session.agendamento_confirmado, status_http=201, expirou=expirou,
+        )
+
     if _parece_selecao(texto):
         return _selecionar_opcao(session, texto, expirou)
 
     recepcao = processar_mensagem_recepcao(mensagem)
+    if (recepcao["intencao"] == Intencao.NAO_ENTENDIDO
+            and session.ultima_intencao == Intencao.AGENDAMENTO
+            and recepcao["dados_extraidos"]):
+        dados = {**session.dados_extraidos, **recepcao["dados_extraidos"]}
+        recepcao = {**recepcao, "intencao": Intencao.AGENDAMENTO,
+                    "dados_extraidos": dados, "encaminhar_para": "agendamento",
+                    "dados_faltantes": [] if "referencia_data" in dados else ["data"],
+                    "acao": "CONSULTAR_DISPONIBILIDADE" if "referencia_data" in dados else "COLETAR_DADOS"}
     estado: OrchestratorState = {
         "session_id": session.session_id,
         "mensagem": mensagem,
@@ -291,9 +317,9 @@ def _confirmar_agendamento(session: SessionContext, expirou: bool) -> dict:
         )
 
     opcao = session.horario_selecionado or {}
+    exigir_prontidao_http()
     state_inicial: AgendamentoState = {
         "colaborador_id": session.colaborador_id,
-        "massoterapeuta_id": str(opcao["massoterapeuta_id"]),
         "horario_id": str(opcao["horario_id"]),
     }
 
@@ -303,6 +329,7 @@ def _confirmar_agendamento(session: SessionContext, expirou: bool) -> dict:
         session.opcoes_horarios = []
         session.horario_selecionado = None
         session.ultima_acao = "AGENDAMENTO_CONFIRMADO"
+        session.agendamento_confirmado = resultado["agendamento"]
         save_session(session)
 
         return _montar_resposta(
@@ -324,7 +351,7 @@ def _confirmar_agendamento(session: SessionContext, expirou: bool) -> dict:
     return _montar_resposta(
         estado=estado,
         sucesso=False,
-        resposta=resultado.get("mensagem", "Não foi possível confirmar o agendamento."),
+        resposta=resultado.get("mensagem_resposta", "Não foi possível confirmar o agendamento."),
         status="erro_confirmacao",
         acao="CONFIRMAR_AGENDAMENTO",
         opcao_selecionada=session.horario_selecionado,
@@ -357,6 +384,7 @@ def _atualizar_session(
     selecao: dict | None,
 ) -> None:
     session.ultima_intencao = str(estado["intencao"])
+    session.agendamento_confirmado = None
     session.ultima_acao = estado["acao"]
     session.dados_extraidos = estado["dados_extraidos"]
     session.opcoes_horarios = opcoes
@@ -417,11 +445,16 @@ def _extrair_horario(texto: str) -> str | None:
 
 
 def _parece_selecao(texto: str) -> bool:
-    return _extrair_ordinal(texto) is not None or _extrair_horario(texto) is not None
+    return re.fullmatch(
+        r"(?:(?:quero|escolho|prefiro)\s+)?(?:(?:a|o|opcao)\s*)?"
+        r"(?:\d+|primeir[oa]|segund[oa]|terceir[oa]|quart[oa]|quint[oa]|"
+        r"(?:[01]?\d|2[0-3])(?::[0-5]\d|h(?:[0-5]\d)?))",
+        texto,
+    ) is not None
 
 
 def _extrair_ordinal(texto: str) -> int | None:
-    match = re.search(r"\bopcao\s*(\d+)\b", texto)
+    match = re.search(r"\bopcao\s*(\d+)\b", texto) or re.fullmatch(r"(\d+)", texto)
     if match:
         return int(match.group(1))
 
@@ -461,9 +494,8 @@ def _descrever_consulta(dados_extraidos: dict[str, str]) -> str:
 
 
 def _descrever_selecao(opcao: dict) -> str:
-    nome = opcao.get("massoterapeuta_nome") or "o massoterapeuta selecionado"
     return (
-        f"Você selecionou {opcao.get('hora_inicio')} com {nome} em "
+        f"Você selecionou {opcao.get('hora_inicio')} em "
         f"{opcao.get('data')}. Deseja confirmar o agendamento?"
     )
 

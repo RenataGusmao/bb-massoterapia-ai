@@ -2,6 +2,7 @@ import re
 import unicodedata
 
 from app.agents.recepcao.intents import Intencao
+from app.agents.bem_estar.safety import identificar_limite_de_seguranca
 
 
 SENSITIVE_HEALTH_KEYWORDS = (
@@ -24,6 +25,8 @@ SENSITIVE_HEALTH_KEYWORDS = (
 )
 
 OUT_OF_SCOPE_KEYWORDS = (
+    "desmarcar", "cancela", "cancelamento", "reagendar", "remarcar",
+    "politica", "futebol", "programacao", "ignore as instrucoes", "ignore todas",
     "cancelar",
     "cancelamento",
     "remarcar",
@@ -47,6 +50,8 @@ SCHEDULING_KEYWORDS = (
 )
 
 WELLBEING_KEYWORDS = (
+    "beneficio", "dica", "antes da massagem", "antes da sessao", "apos a massagem",
+    "pos massagem", "cuidados",
     "depois da massagem",
     "relaxar",
     "relaxamento",
@@ -73,11 +78,14 @@ def classificar_intencao(mensagem: str) -> Intencao:
     if not texto or len(texto) < 3:
         return Intencao.NAO_ENTENDIDO
 
-    if _contem_termo(texto, SENSITIVE_HEALTH_KEYWORDS):
+    if identificar_limite_de_seguranca(mensagem) is not None or _contem_termo(texto, SENSITIVE_HEALTH_KEYWORDS):
         return Intencao.SAUDE_SENSIVEL
 
     if _contem_termo(texto, OUT_OF_SCOPE_KEYWORDS):
         return Intencao.FORA_DE_ESCOPO
+
+    if re.search(r"\b(?:agendar|agendamento|marcar|horario|disponibilidade)\b", texto):
+        return Intencao.AGENDAMENTO
 
     if _contem_termo(texto, WELLBEING_KEYWORDS):
         return Intencao.ORIENTACAO_BEM_ESTAR
