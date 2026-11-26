@@ -4,6 +4,8 @@ from app.api.routes import (
     agendamentos,
     agenda,
     auth,
+    agents_bem_estar,
+    chat,
     colaboradores,
     graph_agendamentos,
     horarios,
@@ -13,6 +15,8 @@ from app.database.supabase import SupabaseConfigurationError, check_database_con
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+api_router.include_router(agents_bem_estar.router)
+api_router.include_router(chat.router)
 api_router.include_router(agenda.router)
 api_router.include_router(colaboradores.router)
 api_router.include_router(massoterapeutas.router)

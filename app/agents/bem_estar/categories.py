@@ -3,6 +3,8 @@ from enum import StrEnum
 
 class CategoriaBemEstar(StrEnum):
     BEM_ESTAR_GERAL = "BEM_ESTAR_GERAL"
+    PRE_MASSAGEM = "PRE_MASSAGEM"
+    FORA_DE_ESCOPO = "FORA_DE_ESCOPO"
     POS_MASSAGEM = "POS_MASSAGEM"
     ERGONOMIA = "ERGONOMIA"
     HIDRATACAO = "HIDRATACAO"

@@ -1,15 +1,28 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents.recepcao.intents import Intencao
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     session_id: str | None = None
     colaborador_id: UUID | None = None
-    mensagem: str = Field(..., min_length=1)
+    mensagem: str = Field(..., min_length=1, max_length=1000)
+
+    @field_validator("mensagem")
+    @classmethod
+    def mensagem_nao_vazia(cls, valor: str) -> str:
+        if not valor.strip():
+            raise ValueError("Informe uma mensagem.")
+        return valor.strip()
+
+    @field_validator("session_id")
+    @classmethod
+    def sessao_uuid(cls, valor: str | None) -> str | None:
+        return str(UUID(valor)) if valor is not None else None
 
 
 class ChatResponse(BaseModel):

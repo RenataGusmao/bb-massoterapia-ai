@@ -1,14 +1,22 @@
+import logging
+
 from app.agents.recepcao.classifier import classificar_intencao
 from app.agents.recepcao.intents import Intencao
 from app.core.config import get_settings
 from app.llm import GeminiClassificationError, classificar_recepcao_com_gemini
 from app.llm.schemas import RecepcaoLLMClassification
 
+logger = logging.getLogger(__name__)
+
 
 def classificar_intencao_com_llm(mensagem: str) -> tuple[Intencao, dict[str, str]]:
+    deterministica = classificar_intencao(mensagem)
+    if deterministica != Intencao.NAO_ENTENDIDO:
+        return deterministica, {}
     try:
         classificacao = classificar_recepcao_com_gemini(mensagem)
     except GeminiClassificationError:
+        logger.warning("Recepcao: fallback deterministico (classificacao_indisponivel).")
         return classificar_intencao(mensagem), {}
 
     if classificacao.confianca < get_settings().llm_confidence_threshold:
