@@ -63,8 +63,10 @@ A autoria do ajuste recebido e registrada no commit de integracao.
 
 1. JWT e get_current_user consultam usuario/vinculo ativos no banco, como nas
    rotas existentes. Admin e colaborador acessam as duas rotas novas.
-2. O endpoint direto aplica respostas fixas e limites de seguranca; nao usa LLM,
-   dados pessoais ou operacoes de agendamento.
+2. O endpoint direto aplica guardrails de entrada e gera resposta contextual via
+   cliente Gemini compartilhado; saida precisa passar por schema e filtros de
+   seguranca. Limites clinicos permanecem respostas fixas, sem LLM. O modulo
+   nao consulta dados pessoais nem executa operacoes de agendamento.
 3. O chat usa usuario_id do JWT. colaborador_id omitido usa o vinculo autenticado;
    colaborador nao pode indicar outro. Admin pode indicar alvo explicito.
 4. Guardrails de saude precedem selecao e confirmacao. Pedidos clinicos,
@@ -85,8 +87,9 @@ A autoria do ajuste recebido e registrada no commit de integracao.
 
 Mensagens clinicas reconhecidas nao sao enviadas ao LLM. A lista lexical nao e
 um classificador clinico exaustivo: texto nao reconhecido pode chegar ao provedor.
-Mesmo que a classificacao externa erre, bem-estar responde apenas com textos
-pre-definidos e nao transforma saida do modelo em instrucao de banco.
+Mesmo que a classificacao externa erre, o bem-estar nao transforma saida do
+modelo em instrucao de banco. A geracao tem validacao conservadora e fallback;
+nao e possivel garantir seguranca semantica exaustiva com filtros lexicais.
 Nao inclua credenciais, dados pessoais ou informacoes clinicas no chat.
 Nao ha agente de nutricao/atividade fisica ou cancelamento de reservas nesta entrega.
 
@@ -161,7 +164,7 @@ SUPABASE_URL e SUPABASE_SECRET_KEY continuam necessarias para autenticacao real.
 
 O fuso segue America/Sao_Paulo. BUSINESS_TIMEZONE e GEMINI_TIMEOUT_SECONDS nao
 foram ativados por esta integracao. Nenhum segredo foi gerado ou modificado.
-Sem Gemini, bem-estar e mensagens deterministicas funcionam; a interpretacao
+Sem Gemini, bem-estar funciona por fallback e mensagens deterministicas funcionam; a interpretacao
 textual original continua dependendo de chave/modelo validos. Sem banco nao ha
 autenticacao real, mesmo quando as respostas de bem-estar sao locais.
 
@@ -194,7 +197,8 @@ de formato; IDs/token reais devem vir da sua conta e dos retornos da API.
 5. **POST /agents/bem-estar**, JWT:
    {"mensagem":"Quais os beneficios gerais da massagem?"}.
    Esperado 200 com categoria=BEM_ESTAR_GERAL, permitido=true, mensagem
-   geral de autocuidado e encaminhamento=null.
+   contextual sobre a pergunta e encaminhamento=null. Se houver fallback,
+   a mensagem comeca com "No momento, segue uma orientacao geral de apoio:".
 6. **POST /agents/bem-estar**, JWT:
    {"mensagem":"Prescreva um medicamento para minha dor"}.
    Esperado 200 com permitido=false, categoria=FORA_DO_LIMITE_PROFISSIONAL
@@ -274,3 +278,155 @@ descartavel; veja README_agendamentos.md. Nunca use Supabase para executa-los.
 Testes Gemini reais tambem sao opt-in e podem consumir quota.
 Os mocks nao certificam banco, privacidade de logs do provedor, quota, modelo
 ou configuracao do ambiente remoto. Homologacao continua necessaria.
+
+## Revisao contextual do bem-estar
+
+Revisao sobre bd807d3, na mesma branch, sem deploy ou SQL.
+Os resultados de 320 testes acima sao o registro da integracao anterior.
+
+### Causa comprovada
+
+Antes da revisao, processar_orientacao nao chamava Gemini. Categorias eram
+escolhidas em sequencia por palavras-chave e a resposta vinha do dicionario
+RESPOSTAS_PERMITIDAS. A pergunta de beneficios com "sentado" caia em ERGONOMIA;
+a outra caia em POS_MASSAGEM pela palavra generica "sessao". Ambos os resultados
+foram reproduzidos com zero chamadas ao modelo.
+
+Gemini participava apenas da classificacao opcional da recepcao de mensagens
+nao reconhecidas. Mensagens reconhecidas por regras nem chegavam ao provedor.
+O fallback dessa classificacao ocultava falhas tecnicas sem um log especifico;
+agora registra um aviso generico. Essa ausencia de geracao era arquitetural,
+nao uma falha de conectividade: o provedor respondeu na validacao controlada.
+
+### Fluxo atual
+
+Autenticacao e entrada permanecem iguais. O bem-estar aplica limites clinicos e
+exclusoes explicitas antes do modelo; depois gera categoria e texto em uma
+unica chamada get_llm().invoke, com system prompt separado da mensagem.
+O mesmo cliente lazy, chave, modelo, timeout e retry do projeto sao reutilizados.
+generation_config limita esta chamada a 700 tokens, sem modificar o cliente
+compartilhado ou o agendamento. Nao ha novos SDKs, servicos ou variaveis.
+
+O JSON interno exige categoria existente, mensagem de 20 a 2000 caracteres e
+segura como booleano estrito, sem campos extras. O texto bruto tem limite de
+6000 caracteres antes do parsing. A declaracao segura=true nao e suficiente:
+saida clinica indevida, promessas absolutas, dosagem, manobras, dados protegidos,
+URLs, HTML e alegacoes de reserva executada sao descartadas. Negacoes limitadas
+de promessas e avisos de que a massagem nao substitui avaliacao profissional
+nao sao tratados como afirmacoes de cura. Isso nao libera prescricoes ou
+dosagens negadas nem frases positivas precedidas de uma tranquilizacao.
+O filtro e deliberadamente conservador; pode recusar textos benignos e nao
+substitui revisao clinica ou avaliacao semantica completa.
+
+Sem chave/dependencia, timeout, falha do provedor, JSON/schema invalido ou
+saida insegura, responde por fallback. Categorias conhecidas preservam
+orientacao segura, com prefixo "No momento, segue uma orientacao geral de apoio:".
+Se nao houver escopo identificavel, solicita reformulacao sem inventar resposta.
+Logs registram somente motivo tecnico fixo, nunca entrada, saida ou excecao bruta.
+O logger uvicorn.error.bem_estar herda o handler/nivel do Uvicorn: no nivel INFO,
+o evento "resposta contextual validada via Gemini" identifica geracao aceita;
+fallback usa WARNING. Nao e necessario habilitar logs verbosos do SDK ou HTTP.
+
+O modelo pode reconhecer um limite que a regra local nao captou: nesse caso o
+texto gerado e descartado e a resposta restritiva pre-definida e utilizada.
+No chat, a rota de saude sensivel continua estritamente deterministica, mesmo
+quando a recepcao usa um criterio mais restritivo que o agente direto.
+
+### Contrato e taxonomia
+
+BemEstarResponse segue com categoria, permitido, mensagem e encaminhamento.
+Nenhuma categoria foi adicionada, removida ou renomeada. BEM_ESTAR_GERAL passa
+a representar explicitamente beneficios e expectativas sobre massoterapia;
+O modelo utiliza a taxonomia para representar a intencao predominante;
+sentado/expediente/sessao podem ser contexto, nao necessariamente a intencao.
+POS_MASSAGEM trata de cuidados depois da sessao. A categoria de uma resposta
+valida nao e reescrita por palavras da pergunta. As regras locais preexistentes
+ficam restritas a seguranca e fallback, que pode ser mais generico.
+Nao ha respostas estaticas especificas para as perguntas de demonstracao.
+
+Adicionar BENEFICIOS_MASSOTERAPIA poderia afetar frontends com enum exaustivo.
+Essa alternativa nao foi adotada: a categoria geral existente e suficiente
+para a melhoria, sem necessidade de alteracao incompatível ou migration.
+
+### Validacao e limites
+
+Suite: 388 aprovados, zero falhas, 15 skips e 4 warnings. Sao 68 casos novos
+em tests/test_bem_estar_contextual.py. O teste anterior de respostas sem LLM
+agora verifica explicitamente fallback por cliente simulado indisponivel;
+os testes novos conferem que entradas distintas produzem os textos distintos
+do modelo simulado e chegam integralmente ao cliente compartilhado.
+Autenticacao, seguranca, sessoes, reserva e prontidao anteriores continuam testados.
+
+OpenAPI anterior e atual: 29 operacoes e schemas identicos. Nao foram alterados
+migrations, services/repositories de reservas, grade, capacidade ou regra dos
+15 dias. Os skips continuam sendo 12 casos Gemini opt-in e tres modulos
+PostgreSQL sem infraestrutura configurada. Mocks nao comprovam qualidade do
+Gemini real, disponibilidade do modelo ou ausencia de alucinacoes.
+
+### Validacao controlada com Gemini real
+
+Modelo ja configurado: gemini-flash-lite-latest, sem alterar .env ou credenciais.
+Chamadas realizadas diretamente pelo agente com textos sinteticos sem dados
+pessoais; o acesso Supabase foi bloqueado no processo de diagnostico.
+O teste clinico recebeu resposta fixa com zero chamadas ao cliente.
+
+| Pedido | Resultado observado em execucoes com saida validada |
+| --- | --- |
+| Beneficios para trabalho sentado | BEM_ESTAR_GERAL; resposta relacionou massoterapia, relaxamento, conforto e habitos do expediente |
+| Beneficios e relaxamento apos trabalho | BEM_ESTAR_GERAL; resposta distinta abordou pausa, tensao cotidiana, experiencia individual e expectativas |
+| Conforto laboral com cuidados antes/depois | Resposta contextual multitematica, sem selecao ou reserva de horarios |
+| Medicamento/dosagem para dores | FORA_DO_LIMITE_PROFISSIONAL, permitido=false, encaminhamento profissional e zero chamadas Gemini |
+
+A analise incluiu o conteudo, nao somente sucesso de chamada ou HTTP.
+As primeiras execucoes revelaram falsos positivos na validacao de ressalvas
+como "nao ... solucao definitiva" e "nao ... tratamento": a regra foi corrigida
+com testes positivos e negativos, sem liberar promessas afirmativas ou medicamentos.
+Tambem ocorreram saidas invalidas/recusadas e acionamentos de fallback durante
+a validacao. A tabela registra comportamentos observados, nao taxa de acerto,
+benchmark ou promessa de que todas as chamadas futuras serao aceitas.
+
+A rodada posterior com as duas perguntas originais produziu respostas reais
+validadas e distintas. Mesmo com provedor acessivel, geracoes futuras podem ser
+recusadas; o prefixo de apoio e os eventos de log distinguem o modo degradado.
+Essas chamadas controladas nao substituem a suite opt-in completa de Gemini.
+
+Para criterios de comunicacao prudente e limites de informacao geral:
+[NCCIH: Massage Therapy](https://www.nccih.nih.gov/health/massage-therapy-what-you-need-to-know).
+Essa referencia nao valida automaticamente respostas do modelo nem oferece
+base para prometer efeitos clinicos individualizados.
+
+### Repetir os casos no Swagger
+
+Com JWT de colaborador, POST /agents/bem-estar:
+
+```json
+{
+  "mensagem": "Quais sao os beneficios da massoterapia para quem trabalha sentado durante muitas horas?"
+}
+```
+
+```json
+{
+  "mensagem": "Quais sao os beneficios da massoterapia e como uma sessao pode ajudar no relaxamento muscular apos um dia de trabalho?"
+}
+```
+
+Esperado 200, categoria BEM_ESTAR_GERAL e permitido=true em ambos, com textos
+voltados aos respectivos contextos. A redacao e variavel; nao espere uma frase
+fixa ou use os textos dos mocks como evidencia de resposta real do Gemini.
+Se aparecer o prefixo de apoio, verificar nos logs llm_nao_configurado,
+timeout, falha_provedor, saida_invalida ou saida_insegura.
+Repetir os textos no POST /chat deve chamar o mesmo agente e conservar o
+envelope do chat, com resposta no lugar de mensagem.
+
+```json
+{
+  "mensagem": "Estou com fortes dores na coluna. Qual medicamento devo tomar e em qual dosagem?"
+}
+```
+
+Esperado 200, permitido=false, FORA_DO_LIMITE_PROFISSIONAL e encaminhamento
+PROFISSIONAL_HABILITADO, sem consulta ao Gemini e sem prescricao.
+A validacao de bem-estar nao depende de sincronizar a agenda; pode manter
+AGENDA_GERACAO_AUTOMATICA=false. O HTTP foi verificado por TestClient, com o
+worker isolado. Nao foi iniciado servidor Uvicorn nem sincronizado o Supabase.

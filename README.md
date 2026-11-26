@@ -15,6 +15,10 @@ Consulte o [guia de integração dos agentes](database/README_bem_estar.md) para
 - Swagger publicado: [documentação interativa](https://bb-massoterapia-ai.onrender.com/docs).
 - Versão declarada no FastAPI: `0.3.0`.
 
+**Revisão do bem-estar:** geração contextualizada via Gemini, com validação
+de saída e fallback determinístico, sem alterar o contrato HTTP ou as categorias.
+A publicação desta branch não equivale a merge ou deploy em produção.
+
 ## Navegação
 
 - [Escopo e funcionalidades](#escopo-e-funcionalidades)
@@ -45,7 +49,7 @@ Consulte o [guia de integração dos agentes](database/README_bem_estar.md) para
 | Calendário | Feriados nacionais e bloqueios administrativos de datas ou intervalos |
 | Profissionais | Cadastro de referência, sem perfil/login; leitura operacional com chave separada |
 | Operação | Diagnóstico de processo, conexão com o banco e prontidão da agenda |
-| Bem-estar | Orientações gerais determinísticas, sem diagnóstico ou prescrição, com JWT |
+| Bem-estar | Orientações contextualizadas por Gemini, com guardrails e fallback determinístico, sem diagnóstico ou prescrição, com JWT |
 | Chat | Roteamento, consulta de vagas, seleção e confirmação pelo grafo existente; sessões vinculadas ao usuário |
 
 Os únicos perfis autenticados são `admin` e `colaborador`. A terceirizada não é um perfil ativo. Na `main`, o cancelamento é feito por administrador em `PATCH /agendamentos/{agendamento_id}/status`; não há rota de cancelamento self-service para colaborador nem cancelamento textual no grafo.
@@ -75,7 +79,7 @@ flowchart TD
     JWT --> Grafo["LangGraph de criação"]
     JWT --> Chat["Chat autenticado e sessão vinculada"]
     Chat --> Roteador["Guardrails e classificação"]
-    Roteador --> BemEstar["Bem-estar: respostas pré-definidas"]
+    Roteador --> BemEstar["Bem-estar: guardrails, geração e fallback"]
     Roteador --> Vagas["Consulta, seleção e confirmação"]
     Vagas --> Grafo
     Roteador --> Classificador["Gemini opcional para mensagens não reconhecidas"]
@@ -83,7 +87,8 @@ flowchart TD
     Entrada -->|Sim| Validacao["Validações determinísticas"]
     Entrada -->|Não| Interprete["Interpretador + vagas reais"]
     Interprete --> Gemini["Google Gemini"]
-    Gemini --> Conferencia["Conferência do ID retornado"]
+    Gemini -->|seleção de vaga| Conferencia["Conferência do ID retornado"]
+    BemEstar <-->|orientação contextual| Gemini
     Conferencia --> Validacao
     Validacao --> Servicos["Services"]
     REST --> Servicos
@@ -99,6 +104,15 @@ flowchart TD
 As rotas autenticam e autorizam o solicitante; os schemas validam o contrato. Services traduzem regras e erros; repositories encapsulam o acesso ao Supabase. A criação e a atualização de status são finalizadas por RPCs transacionais, não por uma sequência de escritas HTTP compensatórias.
 
 O grafo faz pré-validações, mas não substitui as verificações sob locks no PostgreSQL. A leitura dos profissionais usa autenticação por chave, sem usuário JWT, e entrega somente contagens e intervalos.
+
+O bem-estar não utiliza o grafo de reserva: mensagens permitidas seguem para
+geração e categorização em uma chamada ao mesmo cliente Gemini. Pedidos clínicos
+reconhecidos não chegam ao modelo. JSON/schema, escopo e filtros de saída são
+conferidos antes da resposta; falhas usam orientação de apoio sinalizada no texto
+e logs sem conteúdo sensível. O modelo classifica a intenção predominante pela
+taxonomia existente; benefícios e expectativas cabem em `BEM_ESTAR_GERAL`.
+As heurísticas locais servem à segurança e ao modo degradado, sem sobrescrever
+a classificação de uma resposta válida do Gemini.
 
 ## Estrutura do repositório
 
@@ -396,6 +410,11 @@ Acrescente `JWT_SECRET_KEY`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY` e, se usar te
 
 O fuso permanece `America/Sao_Paulo`. O classificador e o interpretador usam o mesmo cliente Gemini lazy, timeout de 30 segundos e `max_retries=2`. O limiar de confiança da classificação opcional é 0,60. Não foram incorporados aliases globais de configuração nem fallback para modelos fixos do ZIP.
 
+O bem-estar compartilha esse cliente/configuração e limita cada geração a 700
+tokens de saída, sem alterar parâmetros dos outros agentes. Não há nova variável
+obrigatória. Sem chave/provedor disponível, continua respondendo pelo fallback
+seguro, não por geração contextualizada.
+
 Use valores fortes e distintos por ambiente; não imprima nem compartilhe tokens e senhas. `.env`, ambientes virtuais, logs e caches estão ignorados pelo Git. Não guarde dumps ou exportações com dados pessoais no repositório.
 
 ### Banco e inicialização
@@ -482,6 +501,15 @@ reprovados, 15 skips e 4 warnings**, em ambiente virtual novo com
 Os skips continuam sendo 12 casos Gemini e três módulos PostgreSQL sem
 infraestrutura/opt-in; transações reais e chamadas externas não foram
 reexecutadas nem declaradas aprovadas nesta entrega.
+
+Na revisão contextual, a suíte terminou com **388 aprovados, zero falhas,
+15 skips e 4 warnings**: 68 cenários novos validam geração simulada, contextos
+distintos, categorias semânticas, saídas inseguras e falhas de provedor.
+Os 29 endpoints e todos os schemas OpenAPI da branch permaneceram idênticos.
+Houve validação controlada separada com o Gemini real, sem dados pessoais,
+acesso ao Supabase ou habilitação da agenda. Foram observadas respostas
+contextuais para os dois pedidos de benefícios, além de saídas recusadas durante
+a revisão; consulte os resultados e limites no guia técnico.
 
 ### PostgreSQL local real
 
