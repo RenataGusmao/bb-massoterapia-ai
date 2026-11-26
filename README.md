@@ -7,7 +7,9 @@ Backend de agendamento de massoterapia corporativa, desenvolvido em Python com F
 
 O contexto do projeto é o atendimento institucional a colaboradores. O MVP reduz o cadastro repetitivo de horários e evita conflitos de reservas, sem atribuir um profissional no momento do agendamento. Este repositório contém a API, as migrations, os testes e os guias operacionais; não contém uma interface web para o usuário final.
 
-**Referência desta documentação:** código da `main`, base `7e0883a`, com migrations 001–008. A implementação de cancelamento por linguagem natural está isolada em `feature/langgraph-cancelamento` e **não faz parte da versão descrita aqui**. Os endereços de produção são informados pela equipe; a disponibilidade e a configuração remotas não são certificadas por este documento.
+**Referência desta documentação:** integração de bem-estar em `feature/agente-bem-estar`, sobre a `origin/main` de base `578f4df`, com migrations 001–008 inalteradas. Esta branch ainda precisa de revisão e implantação para disponibilizar as novas rotas em produção. A implementação de cancelamento por linguagem natural permanece isolada em outra branch e **não faz parte desta entrega**. Os endereços de produção são informados pela equipe; a disponibilidade e a configuração remotas não são certificadas por este documento.
+
+Consulte o [guia de integração dos agentes](database/README_bem_estar.md) para diagnóstico do ZIP, segurança, contratos e demonstração no Swagger.
 
 - API publicada: [bb-massoterapia-ai.onrender.com](https://bb-massoterapia-ai.onrender.com).
 - Swagger publicado: [documentação interativa](https://bb-massoterapia-ai.onrender.com/docs).
@@ -43,6 +45,8 @@ O contexto do projeto é o atendimento institucional a colaboradores. O MVP redu
 | Calendário | Feriados nacionais e bloqueios administrativos de datas ou intervalos |
 | Profissionais | Cadastro de referência, sem perfil/login; leitura operacional com chave separada |
 | Operação | Diagnóstico de processo, conexão com o banco e prontidão da agenda |
+| Bem-estar | Orientações gerais determinísticas, sem diagnóstico ou prescrição, com JWT |
+| Chat | Roteamento, consulta de vagas, seleção e confirmação pelo grafo existente; sessões vinculadas ao usuário |
 
 Os únicos perfis autenticados são `admin` e `colaborador`. A terceirizada não é um perfil ativo. Na `main`, o cancelamento é feito por administrador em `PATCH /agendamentos/{agendamento_id}/status`; não há rota de cancelamento self-service para colaborador nem cancelamento textual no grafo.
 
@@ -69,6 +73,12 @@ flowchart TD
     API --> JWT["JWT + usuário e vínculo ativos no banco"]
     JWT --> REST["Fluxo REST"]
     JWT --> Grafo["LangGraph de criação"]
+    JWT --> Chat["Chat autenticado e sessão vinculada"]
+    Chat --> Roteador["Guardrails e classificação"]
+    Roteador --> BemEstar["Bem-estar: respostas pré-definidas"]
+    Roteador --> Vagas["Consulta, seleção e confirmação"]
+    Vagas --> Grafo
+    Roteador --> Classificador["Gemini opcional para mensagens não reconhecidas"]
     Grafo --> Entrada{"horario_id informado?"}
     Entrada -->|Sim| Validacao["Validações determinísticas"]
     Entrada -->|Não| Interprete["Interpretador + vagas reais"]
@@ -105,8 +115,8 @@ bb-massoterapia-ai/
 |   |-- database/repositories/   # Consultas e adaptação dos envelopes RPC
 |   |-- graphs/agendamento/      # Estado, nós e roteamento do grafo de criação
 |   |-- agents/                 # Interpretador ativo e módulos auxiliares
-|   |-- llm/                    # Componentes de recepção não publicados
-|   |-- memory/                 # Componentes de sessão não publicados
+|   |-- llm/                    # Classificação Gemini opcional da recepção
+|   |-- memory/                 # Sessões efêmeras vinculadas ao usuário
 |   `-- models/                 # Pacote reservado; não é uma camada ORM
 |-- database/
 |   |-- schema.sql              # Base para instalação nova
@@ -115,13 +125,13 @@ bb-massoterapia-ai/
 |   |-- diagnostico_*.sql        # Inspeções para operação manual
 |   `-- README_*.md             # Guias especializados e históricos
 |-- tests/                      # HTTP, regras, IA e PostgreSQL opt-in
-|-- .env.example                # Referência parcial; ver observação abaixo
+|-- .env.example                # Configuração de exemplo, sem segredos
 |-- requirements.txt
 |-- requirements-postgres-test.txt
 `-- render.yaml
 ```
 
-Há arquivos de chat, recepção, bem-estar e orquestração auxiliar no repositório, mas seus routers **não são incluídos** em [app/api/router.py](app/api/router.py). A existência desses módulos não representa funcionalidades HTTP publicadas nem garante sua compatibilidade com as configurações atuais.
+O router inclui o chat central e o endpoint de bem-estar. Os routers legados de recepção isolada e confirmação em `/chat/agendamento/confirmar` permanecem **fora** de [app/api/router.py](app/api/router.py); não são atalhos públicos de reserva. O orquestrador usa memória temporária em processo, não persistência definitiva.
 
 ## Regras de negócio
 
@@ -228,9 +238,13 @@ Todas as rotas abaixo foram conferidas no router e no OpenAPI da base de referê
 | GET | `/agendamentos/{agendamento_id}` | Consultar reserva | JWT admin ou proprietário |
 | PATCH | `/agendamentos/{agendamento_id}/status` | Cancelar, concluir ou registrar falta | JWT admin |
 | POST | `/graph/agendamentos` | Criar reserva via LangGraph | JWT admin ou próprio colaborador; exige prontidão |
+| POST | `/chat` | Orientar ou consultar/selecionar/confirmar reserva | JWT admin/colaborador; confirmação exige prontidão |
+| POST | `/agents/bem-estar` | Orientações gerais de massoterapia | JWT admin/colaborador |
 | GET | `/agenda/atendimentos` | Agenda agregada para profissionais | `X-Agenda-Key`; sem JWT |
 
 O FastAPI disponibiliza também `/docs`, `/redoc` e `/openapi.json`. O Swagger é a referência para campos e respostas tipadas.
+
+Os 27 endpoints da base mantêm contratos e schemas OpenAPI. As duas novas rotas exigem JWT e mensagens não vazias de até 1000 caracteres. Exemplos completos e respostas estão no [roteiro dos agentes](database/README_bem_estar.md#demonstracao-no-swagger).
 
 `GET /horarios` aceita `disponivel`, `data`, `data_inicio`, `data_fim` e o filtro legado `massoterapeuta_id`. `disponivel=false` significa indisponibilidade efetiva, que também pode resultar de bloqueio, calendário ou horário passado, não apenas de ocupação.
 
@@ -347,7 +361,7 @@ Ativar o ambiente é opcional ao usar o caminho completo do Python. No PowerShel
 
 ### Variáveis de ambiente
 
-**Atenção:** o [arquivo de exemplo](.env.example) está parcialmente divergente do código ativo. Ele contém parâmetros de módulos auxiliares, como `GEMINI_API_KEY`, e não inclui `JWT_SECRET_KEY`. Copiá-lo sem ajustes não basta. A fonte efetiva é [app/core/config.py](app/core/config.py); para a API atual, configure:
+O [arquivo de exemplo](.env.example) foi alinhado aos módulos ativos, sem segredos. Copie e preencha as credenciais locais; campos vazios não provisionam serviços. A fonte efetiva é [app/core/config.py](app/core/config.py):
 
 | Variável | Uso e valor padrão |
 | --- | --- |
@@ -357,6 +371,8 @@ Ativar o ambiente é opcional ao usar o caminho completo do Python. No PowerShel
 | `JWT_ALGORITHM` | Algoritmo JWT; padrão `HS256` |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | Validade positiva em minutos; padrão `60` |
 | `GOOGLE_API_KEY` | Necessária para pedidos textuais no interpretador ativo |
+| `GEMINI_API_KEY` | Alias opcional; usado apenas quando `GOOGLE_API_KEY` não estiver definida |
+| `SESSION_TTL_MINUTES` | Expiração por inatividade do chat; inteiro positivo, padrão `30` |
 | `GEMINI_MODEL` | Modelo passado ao provedor; padrão do código `gemini-flash-latest` |
 | `ALLOWED_ORIGINS` | Origens CORS separadas por vírgula; padrão `*` |
 | `AGENDA_GERACAO_AUTOMATICA` | Worker habilitado quando valor é `true`; padrão `true` |
@@ -378,7 +394,7 @@ AGENDA_CAPACIDADE=1
 
 Acrescente `JWT_SECRET_KEY`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY` e, se usar texto, `GOOGLE_API_KEY`. O modelo do `.env.example` sobrescreve o padrão acima: escolha explicitamente um identificador disponível para sua conta. A documentação não certifica a disponibilidade de um modelo no provedor.
 
-`BUSINESS_TIMEZONE`, `SESSION_TTL_MINUTES`, `LLM_CONFIDENCE_THRESHOLD`, `GEMINI_API_KEY` e `GEMINI_TIMEOUT_SECONDS` do exemplo não são lidos pelo `Settings` do fluxo publicado. Não mudam o fuso fixo, a chave, o timeout de 30 segundos ou as duas tentativas de retry configuradas no cliente ativo.
+O fuso permanece `America/Sao_Paulo`. O classificador e o interpretador usam o mesmo cliente Gemini lazy, timeout de 30 segundos e `max_retries=2`. O limiar de confiança da classificação opcional é 0,60. Não foram incorporados aliases globais de configuração nem fallback para modelos fixos do ZIP.
 
 Use valores fortes e distintos por ambiente; não imprima nem compartilhe tokens e senhas. `.env`, ambientes virtuais, logs e caches estão ignorados pelo Git. Não guarde dumps ou exportações com dados pessoais no repositório.
 
@@ -436,7 +452,7 @@ O fluxo ativo está em [app/graphs/agendamento](app/graphs/agendamento/graph.py)
 
 O cliente usa `GOOGLE_API_KEY`, `GEMINI_MODEL`, temperatura zero, timeout de 30 segundos e `max_retries=2`. Pedidos estruturados não precisam de chave Gemini. Sem vaga/interpretação suficiente, o grafo retorna erro com sugestões quando disponíveis, em vez de reservar uma vaga inventada.
 
-Limites: apenas criação na `main`; sem cancelamento textual, remarcação ou memória conversacional publicada. O limite de grupos pode não mostrar toda a janela ao modelo. A mensagem do usuário vai ao provedor externo: evite dados pessoais ou informações de saúde desnecessárias. Falhas de rede, quota, configuração e formato de resposta são tratadas como erros, não como autorização para ignorar regras.
+Limites do grafo: apenas criação, sem cancelamento textual ou remarcação nesta entrega. O chat adiciona contexto temporário de seleção, mas não altera esse grafo. O limite de grupos pode não mostrar toda a janela ao modelo. Mensagens não reconhecidas podem ir ao classificador externo: evite dados pessoais ou informações de saúde desnecessárias. Pedidos clínicos reconhecidos recebem resposta fixa antes de qualquer LLM. Falhas de rede, quota, configuração e formato usam fallback determinístico na recepção, nunca autorização para ignorar regras.
 
 ## Testes e qualidade
 
@@ -458,6 +474,14 @@ Execução padrão:
 Na revisão documental desta base, em **22/10/2026**, a execução sem opt-in PostgreSQL/Gemini terminou com **251 testes aprovados, 15 skips e 4 warnings**. Os skips correspondem a **12 casos Gemini** e **3 módulos PostgreSQL** ignorados na coleta por ausência de configuração. Não equivalem a 15 cenários PostgreSQL aprovados. Os warnings são uma depreciação do TestClient/AnyIO e três avisos da marca `live` não registrada.
 
 Nesta revisão não foram executados testes PostgreSQL reais nem chamadas Gemini. Os 480 aprovados da branch de cancelamento não descrevem a `main` e não são usados como resultado desta versão.
+
+Na integração de bem-estar de **26/11/2026**, a base `578f4df` foi revalidada
+com 251 testes aprovados. Após a integração, foram **320 aprovados, zero
+reprovados, 15 skips e 4 warnings**, em ambiente virtual novo com
+`pip check` aprovado. São 69 casos novos, sem alterar os testes anteriores.
+Os skips continuam sendo 12 casos Gemini e três módulos PostgreSQL sem
+infraestrutura/opt-in; transações reais e chamadas externas não foram
+reexecutadas nem declaradas aprovadas nesta entrega.
 
 ### PostgreSQL local real
 
@@ -521,7 +545,7 @@ O deploy Linux não usa caminhos PowerShell nem `--reload`. O start usa porta do
 
 | Situação | Escopo |
 | --- | --- |
-| Implementado | API JWT admin/colaborador, agenda automática, bloqueios, leitura protegida e criação via LangGraph |
+| Implementado | API JWT admin/colaborador, agenda automática, bloqueios, leitura protegida, criação via LangGraph e integração local do chat/bem-estar nesta branch |
 | Em desenvolvimento separado | Cancelamento por linguagem natural em `feature/langgraph-cancelamento`, sem integração à `main` nesta documentação |
 | Não implementado | Frontend, login de profissionais, associação obrigatória de profissional, notificações, remarcação dedicada, refresh token e recuperação de senha HTTP |
 | Possibilidades futuras, sem compromisso de entrega | Interface de usuário, notificações e importação regional de feriados, sujeitos a definição de requisitos e segurança |
@@ -533,6 +557,7 @@ Não há garantia de execução periódica enquanto o processo estiver suspenso.
 | Documento | Como usar |
 | --- | --- |
 | [Agenda automática e operação](database/README_agenda_automatica.md) | Referência atual para calendário, chave de leitura, prontidão, locks e upgrade 006–008 |
+| [Integração de bem-estar e chat](database/README_bem_estar.md) | Diagnóstico, origem da contribuição, contratos, segurança, testes e demonstração |
 | [Agendamentos transacionais](database/README_agendamentos.md) | Regras, estados, conflitos e ambiente PostgreSQL descartável |
 | [Disponibilidade sem profissional](database/README_disponibilidade.md) | Lotes, vagas, capacidade e preservação do legado |
 | [Segurança e permissões](database/README_seguranca.md) | Escopo da 005 e limites dos privilégios padrão; ler junto com o guia atual |
