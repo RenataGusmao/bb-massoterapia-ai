@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.agents.bem_estar import agent
+from app.agents.llm import LLMConfigurationError
 from app.agents.orchestrator import orchestrator
 from app.agents.recepcao import llm_classifier
 from app.core import security
@@ -36,6 +37,7 @@ def ambiente(monkeypatch):
     app.dependency_overrides[security.get_current_user] = lambda: usuario
     llm = Mock(side_effect=gemini.GeminiClassificationError("falha simulada"))
     monkeypatch.setattr(llm_classifier, "classificar_recepcao_com_gemini", llm)
+    monkeypatch.setattr(agent, "get_llm", Mock(side_effect=LLMConfigurationError("LLM simulado indisponivel")))
     listar = Mock(return_value=[{
         "id": str(VAGA), "data": "2099-01-01", "hora_inicio": "09:40:00",
         "hora_fim": "10:10:00", "massoterapeuta_id": None, "disponivel": True,
@@ -57,7 +59,7 @@ def ambiente(monkeypatch):
     ("Como manter a hidratacao?", "HIDRATACAO"),
     ("Dicas de ergonomia", "ERGONOMIA"),
 ])
-def test_bem_estar_autenticado_sem_banco_ou_llm(ambiente, mensagem, categoria):
+def test_bem_estar_autenticado_com_fallback_sem_banco_ou_llm(ambiente, mensagem, categoria):
     client, listar, llm = ambiente
     r = client.post("/agents/bem-estar", json={"mensagem": mensagem})
     assert r.status_code == 200

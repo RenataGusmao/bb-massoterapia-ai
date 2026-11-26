@@ -1,6 +1,7 @@
 import re
 
 from app.agents.bem_estar import processar_orientacao
+from app.agents.bem_estar.agent import classificar_orientacao, RESPOSTA_SINAL_DE_ALERTA
 from app.agents.bem_estar.categories import CategoriaBemEstar
 from app.agents.orchestrator.state import OrchestratorState
 from app.agents.recepcao import processar_mensagem_recepcao
@@ -221,14 +222,14 @@ def _responder_saude_sensivel(
     estado: OrchestratorState,
     expirou: bool,
 ) -> dict:
-    orientacao = processar_orientacao(estado["mensagem"])
+    categoria = classificar_orientacao(estado["mensagem"])
     _atualizar_session(session, estado, opcoes=[], selecao=None)
 
-    if orientacao["categoria"] == CategoriaBemEstar.SINAL_DE_ALERTA:
-        resposta = orientacao["mensagem"]
+    if categoria == CategoriaBemEstar.SINAL_DE_ALERTA:
+        resposta = RESPOSTA_SINAL_DE_ALERTA
         detalhes = {
-            "categoria": orientacao["categoria"],
-            "encaminhamento": orientacao["encaminhamento"],
+            "categoria": categoria,
+            "encaminhamento": "ATENDIMENTO_DE_SAUDE",
         }
     else:
         resposta = RESPOSTA_SAUDE_SENSIVEL
