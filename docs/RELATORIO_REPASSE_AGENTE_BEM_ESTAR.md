@@ -10,7 +10,7 @@
 | Branch de trabalho | [feature/agente-bem-estar](https://github.com/RenataGusmao/bb-massoterapia-ai/tree/feature/agente-bem-estar) |
 | Base oficial utilizada | `578f4dfb9ff4d3b446d6f4dfd83ce8ff9c988d86` |
 | Última versão técnica e documental recebida para este repasse | `6fb0b936253b65470989353ea39851aea4a362ab` |
-| Responsável pela continuidade | Integrante originalmente designado para o agente de bem-estar |
+| Responsável pela continuidade | Felipe |
 | Escopo desta última entrega | Relatório, referência no README, testes e publicação; nenhuma funcionalidade nova |
 
 **Retomada exata:** preparar o ambiente dessa branch, autenticar um colaborador
