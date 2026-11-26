@@ -11,6 +11,8 @@ O contexto do projeto é o atendimento institucional a colaboradores. O MVP redu
 
 Consulte o [guia de integração dos agentes](database/README_bem_estar.md) para diagnóstico do ZIP, segurança, contratos e demonstração no Swagger.
 
+Para continuidade pela equipe, consulte o [relatório de repasse técnico do agente de bem-estar](docs/RELATORIO_REPASSE_AGENTE_BEM_ESTAR.md), com histórico, evidências, pendências e roteiro de validação.
+
 - API publicada: [bb-massoterapia-ai.onrender.com](https://bb-massoterapia-ai.onrender.com).
 - Swagger publicado: [documentação interativa](https://bb-massoterapia-ai.onrender.com/docs).
 - Versão declarada no FastAPI: `0.3.0`.
